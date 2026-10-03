@@ -170,6 +170,20 @@ function spawnBurst(x, y, color, n) {
     particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.5 + Math.random() * 0.3, max: 0.8, color, r: 2 + Math.random() * 2.5 });
   }
 }
+function spawnShards(bl, color) {
+  const hw = bl.w / 2, hh = bl.h / 2;
+  for (let i = 0; i < 6; i++) {
+    const sx = bl.x + (i % 3) * hw, sy = bl.y + (i < 3 ? 0 : hh);
+    particles.push({
+      x: sx + hw / 2, y: sy + hh / 2,
+      vx: (sx - bl.x - hw + (Math.random() * 20 - 10)) * 2.2,
+      vy: -60 - Math.random() * 120,
+      g: 420, rot: Math.random() * Math.PI, vr: (Math.random() * 2 - 1) * 8,
+      life: 0.55 + Math.random() * 0.25, max: 0.8, color,
+      r: Math.min(hw, hh) * (0.5 + Math.random() * 0.35), shard: true
+    });
+  }
+}
 function addPopup(x, y, text, color) {
   popups.push({ x, y, text, color, life: 0.8 });
 }
@@ -321,7 +335,8 @@ function collideBlocks(b) {
       blocks.splice(i, 1);
       const burstColor = bl.kind === "bonus" ? "#ffd54a" : bl.kind === "steel" ? "#c3ccdd" : ROW_COLORS[bl.row];
       spawnBurst(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 18 : 12);
-      shake(bl.kind === "bonus" ? 3 : 2, 0.12);
+      spawnShards(bl, burstColor);
+      shake(bl.kind === "bonus" ? 4 : 2.5, 0.14);
       if (bl.kind === "bonus") dropCap(bl);
       else if (bl.kind !== "steel") maybeDropCap(bl);
     }
@@ -356,7 +371,8 @@ function update(dt) {
     const p = particles[i];
     p.life -= dt;
     if (p.life <= 0) { particles.splice(i, 1); continue; }
-    p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 200 * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 200) * dt;
+    if (p.shard) p.rot += p.vr * dt;
   }
   for (let i = popups.length - 1; i >= 0; i--) {
     popups[i].life -= dt;
@@ -483,6 +499,28 @@ function drawBlock(b) {
   }
 }
 
+function drawTitleDemo() {
+  const t = performance.now() / 1000;
+  const cx = W / 2, cy = H / 2 + 130, rx = 190, ry = 62;
+  ctx.save();
+  ctx.strokeStyle = "rgba(126,200,255,0.18)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  for (let i = 0; i < 3; i++) {
+    const a = t * 1.6 + i * Math.PI * 2 / 3;
+    const x = cx + Math.cos(a) * rx, y = cy + Math.sin(a) * ry;
+    ctx.globalAlpha = 0.35 + 0.25 * Math.sin(a);
+    ctx.fillStyle = ROW_COLORS[i % ROW_COLORS.length];
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
 function drawOverlay(title, color, lines) {
   ctx.fillStyle = "rgba(5, 8, 15, 0.6)";
   ctx.fillRect(0, 0, W, H);
@@ -540,7 +578,14 @@ function draw() {
   for (const p of particles) {
     ctx.globalAlpha = Math.max(0, p.life / p.max);
     ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - p.r / 2, p.y - p.r / 2, p.r, p.r);
+    if (p.shard) {
+      ctx.save();
+      ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.fillRect(-p.r, -p.r * 0.7, p.r * 2, p.r * 1.4);
+      ctx.restore();
+    } else {
+      ctx.fillRect(p.x - p.r / 2, p.y - p.r / 2, p.r, p.r);
+    }
   }
   ctx.globalAlpha = 1;
 
@@ -644,6 +689,7 @@ function draw() {
   ctx.fillText("← → / A D : 移動   Space / クリック : 発射   P : 一時停止   M : サウンド", 16, H - 12);
 
   if (state === "ready") {
+    drawTitleDemo();
     drawOverlay("ブロック崩し", "#7ec8ff", ["STAGE " + (stage + 1) + " / " + STAGE_SPEEDS.length, "スペース or クリックで発射", "M: 多重球  W: ワイドパドル  S: スロー  +: 残り1", "★: ボーナス   ■: 鋼ブロック（3回必要）"]);
   } else if (state === "paused") {
     drawOverlay("一時停止", "#8fa0c4", ["P or クリックで再開"]);

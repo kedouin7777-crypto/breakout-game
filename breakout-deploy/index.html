@@ -78,10 +78,11 @@ function hexToRgba(hex, a) {
 const paddle = { x: W / 2 - PADDLE_BASE_W / 2, tx: W / 2 - PADDLE_BASE_W / 2, w: PADDLE_BASE_W };
 let stage = 0;
 let blocks = [], balls = [], caps = [];
-let particles = [], popups = [], stars = [], rings = [];
+let particles = [], popups = [], stars = [], rings = [], glows = [], sparks = [], dying = [], fireworks = [];
 let score = 0, lives = 3, best = 0, combo = 0;
 let state = "ready"; // ready | playing | paused | levelclear | win | lose
 let wideT = 0, slowT = 0, clearT = 0, shakeT = 0, shakeMag = 0, comboT = 0;
+let flashT = 0, flashColor = "#ffffff", paddleHitT = 0, wallHitT = 0;
 let muted = false;
 try { best = parseInt(localStorage.getItem("breakout_best_v2"), 10) || 0; } catch (e) {}
 
@@ -224,6 +225,7 @@ function reset(full) {
   blocks = makeBlocks(stage);
   balls = [{ x: paddle.x + paddle.w / 2, y: PADDLE_Y - BALL_R - 1, vx: 0, vy: 0, stuck: true, sp: STAGE_SPEEDS[stage], trail: [] }];
   caps = []; particles = []; popups = []; rings = [];
+  glows = []; sparks = []; dying = []; fireworks = [];
   combo = 0; wideT = 0; slowT = 0; shakeT = 0;
   state = "ready";
 }
@@ -274,6 +276,27 @@ function addPopup(x, y, text, color) {
 function shake(mag, dur) { shakeMag = mag; shakeT = dur; }
 function spawnRing(x, y, color, max) {
   rings.push({ x, y, r: 6, max: max || 34, life: 0.35, maxLife: 0.35, color });
+}
+function addGlow(x, y, r, color, strength) {
+  glows.push({ x, y, r, color, s: strength });
+}
+function spawnSparks(x, y, color, n, spread) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 60 + Math.random() * (spread || 180);
+    sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.25 + Math.random() * 0.3, max: 0.55, color, len: 3 + Math.random() * 5 });
+  }
+}
+function flash(color, dur) { flashColor = color; flashT = dur; }
+function spawnFirework(x, y) {
+  const hue = (Math.random() * 360) | 0;
+  const n = 26 + (Math.random() * 14 | 0);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + Math.random() * 0.2;
+    const sp = 90 + Math.random() * 160;
+    fireworks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.7 + Math.random() * 0.5, max: 1.2, color: "hsl(" + hue + ",90%,65%)" });
+  }
+  spawnRing(x, y, "hsl(" + hue + ",90%,70%)", 60);
 }
 
 // ---- 音 ----
@@ -343,9 +366,9 @@ canvas.addEventListener("touchmove", (e) => {
 
 // ---- 衝突 ----
 function collideWalls(b) {
-  if (b.x < BALL_R) { b.x = BALL_R; b.vx = Math.abs(b.vx); beep(150, 0.05, "square", 0.12); }
-  else if (b.x > W - BALL_R) { b.x = W - BALL_R; b.vx = -Math.abs(b.vx); beep(150, 0.05, "square", 0.12); }
-  if (b.y < BALL_R) { b.y = BALL_R; b.vy = Math.abs(b.vy); beep(150, 0.05, "square", 0.12); }
+  if (b.x < BALL_R) { b.x = BALL_R; b.vx = Math.abs(b.vx); beep(150, 0.05, "square", 0.12); spawnSparks(BALL_R, b.y, "#9ecbff", 6, 140); wallHitT = 0.12; }
+  else if (b.x > W - BALL_R) { b.x = W - BALL_R; b.vx = -Math.abs(b.vx); beep(150, 0.05, "square", 0.12); spawnSparks(W - BALL_R, b.y, "#9ecbff", 6, 140); wallHitT = 0.12; }
+  if (b.y < BALL_R) { b.y = BALL_R; b.vy = Math.abs(b.vy); beep(150, 0.05, "square", 0.12); spawnSparks(b.x, BALL_R, "#9ecbff", 6, 140); wallHitT = 0.12; }
 }
 
 // 水平走行防止：バー接触・ブロック破壊から一定時間経過すると斜め上へ修正
@@ -385,6 +408,9 @@ function collidePaddle(b) {
     b.vy = -Math.cos(a) * b.sp;
     b.y = PADDLE_Y - BALL_R;
     b.idleT = 0;
+    paddleHitT = 0.18;
+    spawnSparks(b.x, PADDLE_Y, wideT > 0 ? "#8bf05a" : "#6ab8ff", 8, 200);
+    spawnRing(b.x, PADDLE_Y, wideT > 0 ? "#8bf05a" : "#6ab8ff", 26);
     if (combo >= 3) addPopup(b.x, b.y - 26, "COMBO " + combo, "#ffe14a");
     combo = 0;
     beep(240, 0.06, "square", 0.18);
@@ -449,9 +475,13 @@ function collideBlocks(b) {
     if (destroyed) {
       blocks.splice(i, 1);
       const burstColor = bl.kind === "bonus" ? "#ffd54a" : bl.kind === "steel" ? "#c3ccdd" : ROW_COLORS[bl.row];
+      dying.push({ x: bl.x, y: bl.y, w: bl.w, h: bl.h, color: burstColor, life: 0.28, maxLife: 0.28 });
       spawnBurst(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 18 : 12);
       spawnShards(bl, burstColor);
       spawnRing(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 46 : 32);
+      spawnSparks(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 14 : 8, 240);
+      addGlow(bl.x + bl.w / 2, bl.y + bl.h / 2, bl.kind === "bonus" ? 130 : 90, burstColor, bl.kind === "bonus" ? 0.5 : 0.32);
+      flash(burstColor, bl.kind === "bonus" ? 0.12 : 0.05);
       shake(bl.kind === "bonus" ? 4 : 2.5, 0.14);
       if (bl.kind === "bonus") dropCap(bl);
       else if (bl.kind !== "steel") maybeDropCap(bl);
@@ -502,11 +532,36 @@ function update(dt) {
     const k = 1 - r.life / r.maxLife;
     r.r = 6 + (r.max - 6) * k;
   }
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.life -= dt;
+    if (s.life <= 0) { sparks.splice(i, 1); continue; }
+    s.x += s.vx * dt; s.y += s.vy * dt; s.vy += 320 * dt;
+  }
+  for (let i = dying.length - 1; i >= 0; i--) {
+    dying[i].life -= dt;
+    if (dying[i].life <= 0) dying.splice(i, 1);
+  }
+  for (let i = fireworks.length - 1; i >= 0; i--) {
+    const f = fireworks[i];
+    f.life -= dt;
+    if (f.life <= 0) { fireworks.splice(i, 1); continue; }
+    f.x += f.vx * dt; f.y += f.vy * dt;
+    f.vx *= 0.985; f.vy = f.vy * 0.985 + 60 * dt;
+  }
+  for (let i = glows.length - 1; i >= 0; i--) {
+    glows[i].s -= dt * 1.6;
+    if (glows[i].s <= 0) glows.splice(i, 1);
+  }
+  if (flashT > 0) flashT = Math.max(0, flashT - dt);
+  if (paddleHitT > 0) paddleHitT = Math.max(0, paddleHitT - dt);
+  if (wallHitT > 0) wallHitT = Math.max(0, wallHitT - dt);
 
   if (state === "paused" || state === "win" || state === "lose") return;
 
   if (state === "levelclear") {
     clearT -= dt;
+    if (Math.random() < dt * 6) spawnFirework(60 + Math.random() * (W - 120), 80 + Math.random() * (H * 0.5));
     if (clearT <= 0) {
       stage++;
       if (stage >= STAGE_SPEEDS.length) { state = "win"; winJingle(); saveBest(); }
@@ -567,7 +622,9 @@ function update(dt) {
   if (blocks.length === 0) {
     score += lives * 100;
     state = "levelclear";
-    clearT = 1.4;
+    clearT = 1.8;
+    flash("#8bf05a", 0.25);
+    for (let i = 0; i < 5; i++) spawnFirework(80 + Math.random() * (W - 160), 70 + Math.random() * (H * 0.45));
     saveBest();
   }
 }
@@ -696,11 +753,30 @@ function drawTitleDemo() {
   ctx.beginPath();
   ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
   ctx.stroke();
+  ctx.globalCompositeOperation = "lighter";
   for (let i = 0; i < 3; i++) {
     const a = t * 1.6 + i * Math.PI * 2 / 3;
     const x = cx + Math.cos(a) * rx, y = cy + Math.sin(a) * ry;
-    ctx.globalAlpha = 0.35 + 0.25 * Math.sin(a);
-    ctx.fillStyle = ROW_COLORS[i % ROW_COLORS.length];
+    const col = ROW_COLORS[i % ROW_COLORS.length];
+    // 残像
+    for (let k = 1; k <= 5; k++) {
+      const aa = a - k * 0.12;
+      ctx.globalAlpha = (0.3 - k * 0.05) * (0.6 + 0.4 * Math.sin(a));
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(aa) * rx, cy + Math.sin(aa) * ry, 6 - k * 0.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 本体＋ハロー
+    ctx.globalAlpha = 0.9;
+    const hg = ctx.createRadialGradient(x, y, 1, x, y, 18);
+    hg.addColorStop(0, hexToRgba(col, 0.6));
+    hg.addColorStop(1, hexToRgba(col, 0));
+    ctx.fillStyle = hg;
+    ctx.beginPath();
+    ctx.arc(x, y, 18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = col;
     ctx.beginPath();
     ctx.arc(x, y, 6, 0, Math.PI * 2);
     ctx.fill();
@@ -710,15 +786,32 @@ function drawTitleDemo() {
 }
 
 function drawOverlay(title, color, lines) {
-  ctx.fillStyle = "rgba(5, 8, 15, 0.6)";
+  const t = performance.now() / 1000;
+  ctx.fillStyle = "rgba(5, 8, 15, 0.62)";
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
+  // タイトル：グラデ＋発光＋揺れ
   ctx.save();
+  const wob = Math.sin(t * 2) * 2;
   ctx.shadowColor = color;
-  ctx.shadowBlur = 18;
-  ctx.fillStyle = color;
+  ctx.shadowBlur = 26 + 8 * Math.sin(t * 3);
+  const tg = ctx.createLinearGradient(0, H / 2 - 80, 0, H / 2 - 30);
+  tg.addColorStop(0, "#ffffff");
+  tg.addColorStop(1, color);
+  ctx.fillStyle = tg;
   ctx.font = "bold 46px sans-serif";
-  ctx.fillText(title, W / 2, H / 2 - 44);
+  ctx.fillText(title, W / 2, H / 2 - 44 + wob);
+  ctx.restore();
+  // 下線グロー
+  ctx.save();
+  ctx.strokeStyle = hexToRgba(color, 0.5);
+  ctx.lineWidth = 2;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 130, H / 2 - 26);
+  ctx.lineTo(W / 2 + 130, H / 2 - 26);
+  ctx.stroke();
   ctx.restore();
   ctx.font = "20px sans-serif";
   ctx.fillStyle = "#dfe6f5";
@@ -734,22 +827,57 @@ function draw() {
 
   for (const b of blocks) drawBlock(b);
 
-  for (const c of caps) {
-    const info = CAP_TYPES[c.type];
+  // 破壊ブロックの縮小フェード
+  for (const d of dying) {
+    const k = d.life / d.maxLife;
+    const cw = d.w * (0.7 + 0.3 * k), ch = d.h * (0.7 + 0.3 * k);
     ctx.save();
-    ctx.shadowColor = info.color;
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = info.color;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, CAP_R, 0, Math.PI * 2);
+    ctx.globalAlpha = k * 0.85;
+    ctx.fillStyle = d.color;
+    ctx.shadowColor = d.color;
+    ctx.shadowBlur = 18 * k;
+    roundRect(d.x + (d.w - cw) / 2, d.y + (d.h - ch) / 2, cw, ch, 5);
     ctx.fill();
     ctx.restore();
+  }
+
+  for (const c of caps) {
+    const info = CAP_TYPES[c.type];
+    const spin = t * 3 + c.x * 0.05;
+    // 落下トレイル
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 1; i <= 4; i++) {
+      ctx.globalAlpha = 0.10 * (5 - i);
+      ctx.fillStyle = info.color;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y - i * 9, CAP_R * (1 - i * 0.16), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(Math.sin(spin) * 0.25);
+    // 外周の回転リング
+    ctx.strokeStyle = hexToRgba(info.color, 0.8);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, CAP_R + 3, spin, spin + Math.PI * 1.2);
+    ctx.stroke();
+    ctx.shadowColor = info.color;
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = info.color;
+    ctx.beginPath();
+    ctx.arc(0, 0, CAP_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
     ctx.fillStyle = "#0b0f1a";
     ctx.font = "bold 14px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(info.label, c.x, c.y);
+    ctx.fillText(info.label, 0, 0);
     ctx.textBaseline = "alphabetic";
+    ctx.restore();
   }
 
   for (const p of particles) {
@@ -777,41 +905,75 @@ function draw() {
     ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
     ctx.stroke();
   }
+  // 火花（線分として描画）
+  for (const s of sparks) {
+    const a = s.life / s.max;
+    const vm = Math.hypot(s.vx, s.vy) || 1;
+    ctx.strokeStyle = hexToRgba(s.color, 0.9 * a);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(s.x - (s.vx / vm) * s.len * a, s.y - (s.vy / vm) * s.len * a);
+    ctx.stroke();
+  }
+  // 花火
+  for (const f of fireworks) {
+    const a = f.life / f.max;
+    ctx.fillStyle = f.color;
+    ctx.globalAlpha = a;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, 1.8 + 1.4 * a, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
   ctx.restore();
 
   // パドル：エネルギーバー風
   ctx.save();
   const accent = wideT > 0 ? "#8bf05a" : "#6ab8ff";
+  const squash = paddleHitT > 0 ? paddleHitT / 0.18 : 0;
+  const ph = PADDLE_H * (1 - 0.25 * squash);
+  const py = PADDLE_Y + (PADDLE_H - ph);
   ctx.shadowColor = accent;
-  ctx.shadowBlur = 20;
-  const pg = ctx.createLinearGradient(0, PADDLE_Y, 0, PADDLE_Y + PADDLE_H);
+  ctx.shadowBlur = 20 + 18 * squash;
+  const pg = ctx.createLinearGradient(0, py, 0, py + ph);
   pg.addColorStop(0, "#f4f8ff");
   pg.addColorStop(0.5, accent);
   pg.addColorStop(1, shade(accent, -0.5));
   ctx.fillStyle = pg;
-  roundRect(paddle.x, PADDLE_Y, paddle.w, PADDLE_H, 7);
+  roundRect(paddle.x, py, paddle.w, ph, 7);
   ctx.fill();
   ctx.shadowBlur = 0;
   // 上面の鏡面ライン
   ctx.strokeStyle = "rgba(255,255,255,0.8)";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
-  ctx.moveTo(paddle.x + 6, PADDLE_Y + 1.4);
-  ctx.lineTo(paddle.x + paddle.w - 6, PADDLE_Y + 1.4);
+  ctx.moveTo(paddle.x + 6, py + 1.4);
+  ctx.lineTo(paddle.x + paddle.w - 6, py + 1.4);
   ctx.stroke();
   // 中央のコア発光
-  const core = ctx.createRadialGradient(paddle.x + paddle.w / 2, PADDLE_Y + PADDLE_H / 2, 2, paddle.x + paddle.w / 2, PADDLE_Y + PADDLE_H / 2, paddle.w * 0.4);
+  const core = ctx.createRadialGradient(paddle.x + paddle.w / 2, py + ph / 2, 2, paddle.x + paddle.w / 2, py + ph / 2, paddle.w * 0.4);
   core.addColorStop(0, "rgba(255,255,255,0.55)");
   core.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = core;
-  roundRect(paddle.x, PADDLE_Y, paddle.w, PADDLE_H, 7);
+  roundRect(paddle.x, py, paddle.w, ph, 7);
   ctx.fill();
+  // 両端のストッパー発光
+  for (const ex of [paddle.x + 3, paddle.x + paddle.w - 3]) {
+    const eg = ctx.createRadialGradient(ex, py + ph / 2, 1, ex, py + ph / 2, 10);
+    eg.addColorStop(0, "rgba(255,255,255,0.7)");
+    eg.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = eg;
+    ctx.beginPath();
+    ctx.arc(ex, py + ph / 2, 10, 0, Math.PI * 2);
+    ctx.fill();
+  }
   // 床への反射光
-  const refl = ctx.createLinearGradient(0, PADDLE_Y + PADDLE_H, 0, PADDLE_Y + PADDLE_H + 26);
-  refl.addColorStop(0, hexToRgba(accent, 0.22));
+  const refl = ctx.createLinearGradient(0, py + ph, 0, py + ph + 26);
+  refl.addColorStop(0, hexToRgba(accent, 0.22 + 0.2 * squash));
   refl.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = refl;
-  ctx.fillRect(paddle.x - 6, PADDLE_Y + PADDLE_H, paddle.w + 12, 26);
+  ctx.fillRect(paddle.x - 6, py + ph, paddle.w + 12, 26);
   ctx.restore();
 
   // ボール：ゴーストレール＋発光コア
@@ -865,11 +1027,66 @@ function draw() {
 
   ctx.restore();
 
+  // ボールと壁の当たり光（加算合成）
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const b of balls) {
+    if (b.stuck) continue;
+    const near = [];
+    if (b.x < 60) near.push([0, b.y, (60 - b.x) / 60]);
+    if (b.x > W - 60) near.push([W, b.y, (60 - (W - b.x)) / 60]);
+    if (b.y < 60) near.push([b.x, 0, (60 - b.y) / 60]);
+    for (const [gx, gy, k] of near) {
+      const g = ctx.createRadialGradient(gx, gy, 2, gx, gy, 70);
+      g.addColorStop(0, "rgba(150,200,255," + (0.25 * k).toFixed(3) + ")");
+      g.addColorStop(1, "rgba(150,200,255,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(gx - 70, gy - 70, 140, 140);
+    }
+  }
+  // 破壊時の残光
+  for (const g of glows) {
+    const rg = ctx.createRadialGradient(g.x, g.y, 1, g.x, g.y, g.r);
+    rg.addColorStop(0, hexToRgba(g.color, g.s));
+    rg.addColorStop(1, hexToRgba(g.color, 0));
+    ctx.fillStyle = rg;
+    ctx.fillRect(g.x - g.r, g.y - g.r, g.r * 2, g.r * 2);
+  }
+  ctx.restore();
+
   const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.85);
   vg.addColorStop(0, "rgba(0,0,0,0)");
   vg.addColorStop(1, "rgba(0,0,0,0.35)");
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
+
+  // 画面フラッシュ
+  if (flashT > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.fillStyle = hexToRgba(flashColor, 0.28 * Math.min(1, flashT / 0.15));
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  // 壁ヒット時の縁光り
+  if (wallHitT > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const eg = ctx.createRadialGradient(W / 2, H / 2, H * 0.45, W / 2, H / 2, H * 0.85);
+    eg.addColorStop(0, "rgba(120,180,255,0)");
+    eg.addColorStop(1, "rgba(120,180,255," + (0.16 * (wallHitT / 0.12)).toFixed(3) + ")");
+    ctx.fillStyle = eg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  // CRTスキャンライン（軽量：4px周期）
+  ctx.save();
+  ctx.globalAlpha = 0.05;
+  ctx.fillStyle = "#000";
+  for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
+  ctx.restore();
 
   // HUD（帯付きパネル）
   ctx.save();

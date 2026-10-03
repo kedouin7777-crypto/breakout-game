@@ -82,7 +82,7 @@ let particles = [], popups = [], stars = [], rings = [], glows = [], sparks = []
 let score = 0, lives = 3, best = 0, combo = 0;
 let state = "ready"; // ready | playing | paused | levelclear | win | lose
 let wideT = 0, slowT = 0, clearT = 0, shakeT = 0, shakeMag = 0, comboT = 0;
-let flashT = 0, flashColor = "#ffffff", paddleHitT = 0, wallHitT = 0, vignetteT = 0;
+let paddleHitT = 0, wallHitT = 0, vignetteT = 0;
 let muted = false;
 try { best = parseInt(localStorage.getItem("breakout_best_v2"), 10) || 0; } catch (e) {}
 
@@ -333,7 +333,6 @@ function spawnSparks(x, y, color, n, spread) {
     sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.25 + Math.random() * 0.3, max: 0.55, color, len: 3 + Math.random() * 5 });
   }
 }
-function flash(color, dur) { flashColor = color; flashT = dur; }
 function spawnFirework(x, y) {
   const hue = (Math.random() * 360) | 0;
   const n = 26 + (Math.random() * 14 | 0);
@@ -531,7 +530,6 @@ function collideBlocks(b) {
       spawnShock(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor);
       spawnSparks(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 14 : 8, 240);
       addGlow(bl.x + bl.w / 2, bl.y + bl.h / 2, bl.kind === "bonus" ? 130 : 90, burstColor, bl.kind === "bonus" ? 0.5 : 0.32);
-      flash(burstColor, bl.kind === "bonus" ? 0.12 : 0.05);
       shake(bl.kind === "bonus" ? 4 : 2.5, 0.14);
       if (bl.kind === "bonus") dropCap(bl);
       else if (bl.kind !== "steel") maybeDropCap(bl);
@@ -562,7 +560,7 @@ function update(dt) {
     if (s.y > H) { s.y = -2; s.x = Math.random() * W; }
   }
   for (const bl of blocks) {
-    if (bl.flash > 0) bl.flash = Math.max(0, bl.flash - dt * 6);
+    if (bl.flash > 0) bl.flash = Math.max(0, bl.flash - dt * 4);
     if (bl.hitShake > 0) bl.hitShake = Math.max(0, bl.hitShake - dt * 7);
   }
 
@@ -626,7 +624,6 @@ function update(dt) {
     if (m.life <= 0) { meteors.splice(i, 1); continue; }
     m.x += m.vx * dt; m.y += m.vy * dt;
   }
-  if (flashT > 0) flashT = Math.max(0, flashT - dt);
   if (paddleHitT > 0) paddleHitT = Math.max(0, paddleHitT - dt);
   if (wallHitT > 0) wallHitT = Math.max(0, wallHitT - dt);
   if (vignetteT > 0) vignetteT = Math.max(0, vignetteT - dt * 0.8);
@@ -698,7 +695,9 @@ function update(dt) {
     score += lives * 100;
     state = "levelclear";
     clearT = 1.8;
-    flash("#8bf05a", 0.25);
+    for (let i = 0; i < 3; i++) {
+      addGlow(80 + Math.random() * (W - 160), 70 + Math.random() * (H * 0.45), 160, "#8bf05a", 0.3);
+    }
     for (let i = 0; i < 5; i++) spawnFirework(80 + Math.random() * (W - 160), 70 + Math.random() * (H * 0.45));
     saveBest();
   }
@@ -1170,15 +1169,6 @@ function draw() {
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
 
-  // 画面フラッシュ
-  if (flashT > 0) {
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.fillStyle = hexToRgba(flashColor, 0.28 * Math.min(1, flashT / 0.15));
-    ctx.fillRect(0, 0, W, H);
-    ctx.restore();
-  }
-
   // 壁ヒット時の縁光り
   if (wallHitT > 0) {
     ctx.save();
@@ -1196,7 +1186,7 @@ function draw() {
     ctx.save();
     const rv = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.8);
     rv.addColorStop(0, "rgba(255,40,40,0)");
-    rv.addColorStop(1, "rgba(255,30,30," + (0.4 * vignetteT).toFixed(3) + ")");
+    rv.addColorStop(1, "rgba(255,30,30," + (0.22 * vignetteT).toFixed(3) + ")");
     ctx.fillStyle = rv;
     ctx.fillRect(0, 0, W, H);
     ctx.restore();

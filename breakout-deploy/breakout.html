@@ -69,11 +69,16 @@ function shade(hex, amt) {
   return "rgb(" + r + "," + g + "," + b + ")";
 }
 
+function hexToRgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
+}
+
 // ---- 状態 ----
 const paddle = { x: W / 2 - PADDLE_BASE_W / 2, tx: W / 2 - PADDLE_BASE_W / 2, w: PADDLE_BASE_W };
 let stage = 0;
 let blocks = [], balls = [], caps = [];
-let particles = [], popups = [], stars = [];
+let particles = [], popups = [], stars = [], rings = [];
 let score = 0, lives = 3, best = 0, combo = 0;
 let state = "ready"; // ready | playing | paused | levelclear | win | lose
 let wideT = 0, slowT = 0, clearT = 0, shakeT = 0, shakeMag = 0, comboT = 0;
@@ -129,17 +134,96 @@ function makeBlocks(s) {
 
 function makeStars() {
   const list = [];
-  for (let i = 0; i < 90; i++) {
-    list.push({ x: Math.random() * W, y: Math.random() * H, r: 0.5 + Math.random() * 1.6, ph: Math.random() * Math.PI * 2, tw: 0.8 + Math.random() * 2.4, vy: 4 + Math.random() * 10 });
+  for (let i = 0; i < 140; i++) {
+    const depth = Math.random();
+    list.push({
+      x: Math.random() * W, y: Math.random() * H,
+      r: 0.4 + depth * 1.8, ph: Math.random() * Math.PI * 2,
+      tw: 0.8 + Math.random() * 2.4, vy: 2 + depth * 14,
+      depth, cross: Math.random() < 0.12
+    });
   }
   return list;
+}
+
+function makeNebula() {
+  const off = document.createElement("canvas");
+  off.width = W; off.height = H;
+  const oc = off.getContext("2d");
+  const blobs = [
+    { x: W * 0.2, y: H * 0.25, r: 260, c: "rgba(70,110,220,0.16)" },
+    { x: W * 0.8, y: H * 0.15, r: 220, c: "rgba(150,70,200,0.13)" },
+    { x: W * 0.65, y: H * 0.7, r: 300, c: "rgba(40,140,190,0.10)" },
+    { x: W * 0.15, y: H * 0.8, r: 200, c: "rgba(200,80,140,0.08)" }
+  ];
+  for (const b of blobs) {
+    const g = oc.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+    g.addColorStop(0, b.c);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    oc.fillStyle = g;
+    oc.fillRect(b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
+  }
+  return off;
+}
+const nebulaImg = makeNebula();
+
+function drawBackground(t) {
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#0d1526");
+  bg.addColorStop(0.5, "#0a0f1d");
+  bg.addColorStop(1, "#05070d");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.drawImage(nebulaImg, 0, 0);
+
+  // オーロラ
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (let k = 0; k < 3; k++) {
+    const hue = [200, 265, 165][k];
+    const yBase = 90 + k * 55;
+    const grad = ctx.createLinearGradient(0, yBase - 70, 0, yBase + 130);
+    grad.addColorStop(0, "hsla(" + hue + ",80%,60%,0)");
+    grad.addColorStop(0.5, "hsla(" + hue + ",80%,60%,0.055)");
+    grad.addColorStop(1, "hsla(" + hue + ",80%,60%,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (let x = 0; x <= W; x += 16) {
+      const y = yBase + Math.sin(x * 0.008 + t * 0.35 + k * 2.1) * 34 + Math.sin(x * 0.021 - t * 0.22 + k) * 16;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 星（遠景→近景、瞬きと流線）
+  for (const s of stars) {
+    const a = 0.12 + 0.5 * s.depth * (0.5 + 0.5 * Math.sin(t * s.tw + s.ph));
+    ctx.fillStyle = "rgba(190,210,255," + a.toFixed(2) + ")";
+    ctx.fillRect(s.x, s.y, s.r, s.r);
+    if (s.cross && s.depth > 0.7) {
+      ctx.save();
+      ctx.globalAlpha = a * 0.8;
+      ctx.strokeStyle = "rgba(210,230,255,0.8)";
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(s.x - 3, s.y); ctx.lineTo(s.x + 3, s.y);
+      ctx.moveTo(s.x, s.y - 3); ctx.lineTo(s.x, s.y + 3);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
 }
 
 function reset(full) {
   if (full) { stage = 0; score = 0; lives = 3; }
   blocks = makeBlocks(stage);
   balls = [{ x: paddle.x + paddle.w / 2, y: PADDLE_Y - BALL_R - 1, vx: 0, vy: 0, stuck: true, sp: STAGE_SPEEDS[stage], trail: [] }];
-  caps = []; particles = []; popups = [];
+  caps = []; particles = []; popups = []; rings = [];
   combo = 0; wideT = 0; slowT = 0; shakeT = 0;
   state = "ready";
 }
@@ -188,6 +272,9 @@ function addPopup(x, y, text, color) {
   popups.push({ x, y, text, color, life: 0.8 });
 }
 function shake(mag, dur) { shakeMag = mag; shakeT = dur; }
+function spawnRing(x, y, color, max) {
+  rings.push({ x, y, r: 6, max: max || 34, life: 0.35, maxLife: 0.35, color });
+}
 
 // ---- 音 ----
 let actx = null;
@@ -336,6 +423,7 @@ function collideBlocks(b) {
       const burstColor = bl.kind === "bonus" ? "#ffd54a" : bl.kind === "steel" ? "#c3ccdd" : ROW_COLORS[bl.row];
       spawnBurst(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 18 : 12);
       spawnShards(bl, burstColor);
+      spawnRing(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 46 : 32);
       shake(bl.kind === "bonus" ? 4 : 2.5, 0.14);
       if (bl.kind === "bonus") dropCap(bl);
       else if (bl.kind !== "steel") maybeDropCap(bl);
@@ -378,6 +466,13 @@ function update(dt) {
     popups[i].life -= dt;
     popups[i].y -= 24 * dt;
     if (popups[i].life <= 0) popups.splice(i, 1);
+  }
+  for (let i = rings.length - 1; i >= 0; i--) {
+    const r = rings[i];
+    r.life -= dt;
+    if (r.life <= 0) { rings.splice(i, 1); continue; }
+    const k = 1 - r.life / r.maxLife;
+    r.r = 6 + (r.max - 6) * k;
   }
 
   if (state === "paused" || state === "win" || state === "lose") return;
@@ -454,49 +549,113 @@ function drawBlock(b) {
   let base;
   if (b.kind === "bonus") base = "#ffd54a";
   else if (b.kind === "steel") base = damaged ? "#7f8aa0" : "#9aa6bd";
-  else base = damaged ? "#aeb8cc" : ROW_COLORS[b.row];
+  else base = ROW_COLORS[b.row];
+  const t = performance.now() / 1000;
+
+  ctx.save();
+  // 接地影
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  roundRect(b.x + 2, b.y + 3, b.w, b.h, 5);
+  ctx.fill();
+
+  // 本体：上から光が当たる立体グラデ
   const g = ctx.createLinearGradient(b.x, b.y, b.x, b.y + b.h);
-  g.addColorStop(0, base);
-  g.addColorStop(1, shade(base, -0.28));
+  g.addColorStop(0, shade(base, 0.28));
+  g.addColorStop(0.45, base);
+  g.addColorStop(1, shade(base, -0.42));
   ctx.fillStyle = g;
-  roundRect(b.x, b.y, b.w, b.h, 4);
+  roundRect(b.x, b.y, b.w, b.h, 5);
   ctx.fill();
-  ctx.fillStyle = "rgba(255,255,255,0.30)";
-  roundRect(b.x + 2, b.y + 2, b.w - 4, 4, 2);
+
+  // ベベル（上明・下暗）
+  ctx.strokeStyle = "rgba(255,255,255,0.45)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(b.x + 5, b.y + 1.2);
+  ctx.lineTo(b.x + b.w - 5, b.y + 1.2);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(0,0,0,0.4)";
+  ctx.beginPath();
+  ctx.moveTo(b.x + 5, b.y + b.h - 1.2);
+  ctx.lineTo(b.x + b.w - 5, b.y + b.h - 1.2);
+  ctx.stroke();
+
+  // 左上のスペキュラ
+  const sp = ctx.createLinearGradient(b.x, b.y, b.x + b.w * 0.5, b.y + b.h);
+  sp.addColorStop(0, "rgba(255,255,255,0.30)");
+  sp.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = sp;
+  roundRect(b.x + 2, b.y + 2, b.w - 4, b.h * 0.5, 3);
   ctx.fill();
-  ctx.fillStyle = "rgba(0,0,0,0.22)";
-  ctx.fillRect(b.x + 2, b.y + b.h - 4, b.w - 4, 3);
+
   if (b.kind === "bonus") {
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    ctx.font = "bold 16px sans-serif";
+    // 金色の脈動発光と星
+    const pulse = 0.5 + 0.5 * Math.sin(t * 4 + b.x * 0.1);
+    ctx.shadowColor = "#ffd54a";
+    ctx.shadowBlur = 10 + 8 * pulse;
+    ctx.strokeStyle = "rgba(255,225,120," + (0.5 + 0.4 * pulse).toFixed(2) + ")";
+    ctx.lineWidth = 1.5;
+    roundRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, 4);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    ctx.font = "bold 15px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("★", b.x + b.w / 2, b.y + b.h / 2 + 6);
+    ctx.fillText("★", b.x + b.w / 2, b.y + b.h / 2 + 5);
   }
   if (b.kind === "steel") {
-    ctx.fillStyle = "rgba(255,255,255,0.35)";
-    ctx.beginPath();
-    ctx.arc(b.x + 7, b.y + 7, 2.2, 0, Math.PI * 2);
-    ctx.arc(b.x + b.w - 7, b.y + 7, 2.2, 0, Math.PI * 2);
-    ctx.arc(b.x + 7, b.y + b.h - 7, 2.2, 0, Math.PI * 2);
-    ctx.arc(b.x + b.w - 7, b.y + b.h - 7, 2.2, 0, Math.PI * 2);
-    ctx.fill();
+    // ブラシ目＋リベット
+    ctx.strokeStyle = "rgba(255,255,255,0.10)";
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 5; i++) {
+      ctx.beginPath();
+      ctx.moveTo(b.x + 4, b.y + i * b.h / 5);
+      ctx.lineTo(b.x + b.w - 4, b.y + i * b.h / 5);
+      ctx.stroke();
+    }
+    for (const [rx, ry] of [[7, 6], [b.w - 7, 6], [7, b.h - 6], [b.w - 7, b.h - 6]]) {
+      const rg = ctx.createRadialGradient(b.x + rx - 0.7, b.y + ry - 0.7, 0.4, b.x + rx, b.y + ry, 2.6);
+      rg.addColorStop(0, "#e8eef8");
+      rg.addColorStop(1, "#5d6878");
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.arc(b.x + rx, b.y + ry, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
+
+  // HPリング（複数HPブロック）
+  if (b.maxHp > 1 && b.hp > 1) {
+    ctx.strokeStyle = "rgba(255,255,255,0.75)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(b.x + b.w - 11, b.y + b.h / 2, 5.5, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * b.hp / b.maxHp));
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(b.x + b.w - 11, b.y + b.h / 2, 5.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   if (b.flash > 0) {
-    ctx.fillStyle = "rgba(255,255,255," + (0.55 * b.flash).toFixed(2) + ")";
-    roundRect(b.x, b.y, b.w, b.h, 4);
+    ctx.fillStyle = "rgba(255,255,255," + (0.6 * b.flash).toFixed(2) + ")";
+    roundRect(b.x, b.y, b.w, b.h, 5);
     ctx.fill();
   }
   if (damaged) {
-    ctx.strokeStyle = "rgba(0,0,0,0.5)";
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(10,12,20,0.6)";
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.moveTo(b.x + b.w * 0.3, b.y + 4);
-    ctx.lineTo(b.x + b.w * 0.45, b.y + b.h / 2);
-    ctx.lineTo(b.x + b.w * 0.38, b.y + b.h - 4);
-    ctx.moveTo(b.x + b.w * 0.6, b.y + 3);
-    ctx.lineTo(b.x + b.w * 0.55, b.y + b.h - 3);
+    ctx.moveTo(b.x + b.w * 0.28, b.y + 3);
+    ctx.lineTo(b.x + b.w * 0.42, b.y + b.h * 0.5);
+    ctx.lineTo(b.x + b.w * 0.34, b.y + b.h - 3);
+    ctx.moveTo(b.x + b.w * 0.62, b.y + 2);
+    ctx.lineTo(b.x + b.w * 0.55, b.y + b.h * 0.6);
+    ctx.lineTo(b.x + b.w * 0.68, b.y + b.h - 2);
     ctx.stroke();
   }
+  ctx.restore();
 }
 
 function drawTitleDemo() {
@@ -538,22 +697,11 @@ function drawOverlay(title, color, lines) {
 }
 
 function draw() {
-  const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, "#101828");
-  bg.addColorStop(0.55, "#0b0f1a");
-  bg.addColorStop(1, "#070a12");
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
+  const t = performance.now() / 1000;
+  drawBackground(t);
 
   ctx.save();
   if (shakeT > 0) ctx.translate((Math.random() * 2 - 1) * shakeMag, (Math.random() * 2 - 1) * shakeMag);
-
-  const t = performance.now() / 1000;
-  for (const s of stars) {
-    const a = 0.15 + 0.35 * (0.5 + 0.5 * Math.sin(t * s.tw + s.ph));
-    ctx.fillStyle = "rgba(180,200,255," + a.toFixed(2) + ")";
-    ctx.fillRect(s.x, s.y, s.r, s.r);
-  }
 
   for (const b of blocks) drawBlock(b);
 
@@ -589,38 +737,87 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
+  // ヒットリング波
   ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const r of rings) {
+    const a = r.life / r.maxLife;
+    ctx.strokeStyle = hexToRgba(r.color, 0.55 * a);
+    ctx.lineWidth = 2.5 * a + 0.5;
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // パドル：エネルギーバー風
+  ctx.save();
+  const accent = wideT > 0 ? "#8bf05a" : "#6ab8ff";
+  ctx.shadowColor = accent;
+  ctx.shadowBlur = 20;
   const pg = ctx.createLinearGradient(0, PADDLE_Y, 0, PADDLE_Y + PADDLE_H);
-  if (wideT > 0) { pg.addColorStop(0, "#e6ffcc"); pg.addColorStop(1, "#9be86a"); }
-  else { pg.addColorStop(0, "#f2f6ff"); pg.addColorStop(1, "#9ecbff"); }
-  ctx.shadowColor = wideT > 0 ? "#8bf05a" : "#9ecbff";
-  ctx.shadowBlur = wideT > 0 ? 22 : 12;
+  pg.addColorStop(0, "#f4f8ff");
+  pg.addColorStop(0.5, accent);
+  pg.addColorStop(1, shade(accent, -0.5));
   ctx.fillStyle = pg;
   roundRect(paddle.x, PADDLE_Y, paddle.w, PADDLE_H, 7);
   ctx.fill();
-  ctx.restore();
-  ctx.fillStyle = "rgba(255,255,255,0.55)";
-  roundRect(paddle.x + 2, PADDLE_Y + 1, paddle.w - 4, 4, 2);
+  ctx.shadowBlur = 0;
+  // 上面の鏡面ライン
+  ctx.strokeStyle = "rgba(255,255,255,0.8)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(paddle.x + 6, PADDLE_Y + 1.4);
+  ctx.lineTo(paddle.x + paddle.w - 6, PADDLE_Y + 1.4);
+  ctx.stroke();
+  // 中央のコア発光
+  const core = ctx.createRadialGradient(paddle.x + paddle.w / 2, PADDLE_Y + PADDLE_H / 2, 2, paddle.x + paddle.w / 2, PADDLE_Y + PADDLE_H / 2, paddle.w * 0.4);
+  core.addColorStop(0, "rgba(255,255,255,0.55)");
+  core.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = core;
+  roundRect(paddle.x, PADDLE_Y, paddle.w, PADDLE_H, 7);
   ctx.fill();
+  // 床への反射光
+  const refl = ctx.createLinearGradient(0, PADDLE_Y + PADDLE_H, 0, PADDLE_Y + PADDLE_H + 26);
+  refl.addColorStop(0, hexToRgba(accent, 0.22));
+  refl.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = refl;
+  ctx.fillRect(paddle.x - 6, PADDLE_Y + PADDLE_H, paddle.w + 12, 26);
+  ctx.restore();
 
+  // ボール：ゴーストレール＋発光コア
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
   for (const b of balls) {
     const n = b.trail.length;
     for (let i = 0; i < n; i++) {
       const tp = b.trail[i];
       const k = (i + 1) / n;
-      ctx.fillStyle = "rgba(158,203,255," + (0.22 * k).toFixed(2) + ")";
+      ctx.fillStyle = "rgba(140,190,255," + (0.16 * k * k).toFixed(3) + ")";
       ctx.beginPath();
-      ctx.arc(tp.x, tp.y, BALL_R * (0.4 + 0.6 * k), 0, Math.PI * 2);
+      ctx.arc(tp.x, tp.y, BALL_R * (0.25 + 0.75 * k), 0, Math.PI * 2);
       ctx.fill();
     }
   }
   for (const b of balls) {
+    const halo = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, BALL_R * 3.2);
+    halo.addColorStop(0, "rgba(170,215,255,0.5)");
+    halo.addColorStop(0.4, "rgba(140,190,255,0.18)");
+    halo.addColorStop(1, "rgba(140,190,255,0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, BALL_R * 3.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  for (const b of balls) {
     ctx.save();
     ctx.shadowColor = "#9ecbff";
-    ctx.shadowBlur = 14;
-    const bg2 = ctx.createRadialGradient(b.x - 2, b.y - 2, 1, b.x, b.y, BALL_R);
+    ctx.shadowBlur = 16;
+    const bg2 = ctx.createRadialGradient(b.x - 2.5, b.y - 2.5, 1, b.x, b.y, BALL_R);
     bg2.addColorStop(0, "#ffffff");
-    bg2.addColorStop(1, "#bcd8ff");
+    bg2.addColorStop(0.6, "#dcecff");
+    bg2.addColorStop(1, "#8fb8f2");
     ctx.fillStyle = bg2;
     ctx.beginPath();
     ctx.arc(b.x, b.y, BALL_R, 0, Math.PI * 2);
@@ -645,17 +842,30 @@ function draw() {
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
 
-  // HUD
+  // HUD（帯付きパネル）
+  ctx.save();
+  const hud = ctx.createLinearGradient(0, 0, 0, 40);
+  hud.addColorStop(0, "rgba(8,12,22,0.85)");
+  hud.addColorStop(1, "rgba(8,12,22,0)");
+  ctx.fillStyle = hud;
+  ctx.fillRect(0, 0, W, 40);
+  ctx.strokeStyle = "rgba(126,200,255,0.25)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, 39.5); ctx.lineTo(W, 39.5);
+  ctx.stroke();
   ctx.textAlign = "left";
   ctx.fillStyle = "#dfe6f5";
-  ctx.font = "18px sans-serif";
-  ctx.fillText("SCORE " + score, 16, 30);
+  ctx.font = "bold 18px sans-serif";
+  ctx.fillText("SCORE " + score, 16, 27);
   ctx.textAlign = "right";
-  ctx.fillText("LIVES " + "♥".repeat(Math.max(lives, 0)), W - 16, 30);
+  ctx.fillStyle = "#ff7a8a";
+  ctx.fillText("♥".repeat(Math.max(lives, 0)), W - 16, 27);
   ctx.textAlign = "center";
   ctx.fillStyle = "#8fa0c4";
   ctx.font = "14px sans-serif";
-  ctx.fillText("STAGE " + (stage + 1) + " / " + STAGE_SPEEDS.length + "   BEST " + best, W / 2, 26);
+  ctx.fillText("STAGE " + (stage + 1) + " / " + STAGE_SPEEDS.length + "   BEST " + best, W / 2, 25);
+  ctx.restore();
 
   if (combo >= 3) {
     const mult = (1 + Math.min(combo, 20) * 0.05).toFixed(2);

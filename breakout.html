@@ -37,12 +37,16 @@ const STAGE_SPEEDS = [320, 375, 435, 500];
 const CAP_R = 13, CAP_FALL = 130, CAP_DROP = 0.24;
 const WIDE_MULT = 1.6, WIDE_TIME = 8;
 const SLOW_MULT = 0.72, SLOW_TIME = 8;
+const LASER_TIME = 7, LASER_CD = 0.5, FIRE_TIME = 6, SHIELD_TIME = 10;
 const MAX_LIVES = 5, MAX_BALLS = 8;
 const CAP_TYPES = {
   multi: { label: "M", color: "#4ac6ff" },
   wide:  { label: "W", color: "#8bf05a" },
   slow:  { label: "S", color: "#ff9f45" },
-  life:  { label: "+", color: "#ff52a3" }
+  life:  { label: "+", color: "#ff52a3" },
+  laser: { label: "L", color: "#ff6bd0" },
+  fire:  { label: "F", color: "#ff7a3d" },
+  shield:{ label: "D", color: "#59e6d0" }
 };
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -82,6 +86,8 @@ let particles = [], popups = [], stars = [], rings = [], glows = [], sparks = []
 let score = 0, lives = 3, best = 0, combo = 0;
 let state = "ready"; // ready | playing | paused | levelclear | win | lose
 let wideT = 0, slowT = 0, clearT = 0, shakeT = 0, shakeMag = 0, comboT = 0;
+let laserT = 0, laserCd = 0, fireT = 0, shieldT = 0;
+let lasers = [];
 let paddleHitT = 0, wallHitT = 0, vignetteT = 0;
 let muted = false;
 try { best = parseInt(localStorage.getItem("breakout_best_v2"), 10) || 0; } catch (e) {}
@@ -128,6 +134,11 @@ function makeBlocks(s) {
         const idx = (Math.random() * list.length) | 0;
         if (list[idx].kind === "normal") { list[idx].kind = "steel"; list[idx].hp = list[idx].maxHp = 3; }
       }
+    }
+    const bombN = s >= 2 ? 2 : 1;
+    for (let i = 0; i < bombN; i++) {
+      const idx = (Math.random() * list.length) | 0;
+      if (list[idx].kind === "normal") { list[idx].kind = "bomb"; list[idx].hp = list[idx].maxHp = 1; }
     }
   }
   return list;
@@ -268,8 +279,9 @@ function reset(full) {
   blocks = makeBlocks(stage);
   balls = [{ x: paddle.x + paddle.w / 2, y: PADDLE_Y - BALL_R - 1, vx: 0, vy: 0, stuck: true, sp: STAGE_SPEEDS[stage], trail: [] }];
   caps = []; particles = []; popups = []; rings = [];
-  glows = []; sparks = []; dying = []; fireworks = []; shocks = [];
+  glows = []; sparks = []; dying = []; fireworks = []; shocks = []; meteors = []; lasers = [];
   combo = 0; wideT = 0; slowT = 0; shakeT = 0;
+  laserT = 0; laserCd = 0; fireT = 0; shieldT = 0;
   state = "ready";
 }
 
@@ -463,7 +475,7 @@ function collidePaddle(b) {
 }
 
 function dropCap(bl) {
-  const types = ["multi", "wide", "slow", "life"];
+  const types = ["multi", "wide", "slow", "life", "laser", "fire", "shield"];
   caps.push({ x: bl.x + bl.w / 2, y: bl.y + bl.h / 2, type: types[(Math.random() * types.length) | 0] });
 }
 
@@ -487,6 +499,36 @@ function applyCap(c) {
     slowT = SLOW_TIME;
   } else if (c.type === "life") {
     lives = Math.min(lives + 1, MAX_LIVES);
+  } else if (c.type === "laser") {
+    laserT = LASER_TIME;
+  } else if (c.type === "fire") {
+    fireT = FIRE_TIME;
+  } else if (c.type === "shield") {
+    shieldT = SHIELD_TIME;
+  }
+}
+
+function explodeBlock(bl) {
+  const cx = bl.x + bl.w / 2, cy = bl.y + bl.h / 2, R = 95;
+  spawnRing(cx, cy, "#ff8a4a", 120);
+  spawnShock(cx, cy, "#ffb060");
+  spawnBurst(cx, cy, "#ff8a4a", 26);
+  spawnSparks(cx, cy, "#ffd54a", 18, 320);
+  addGlow(cx, cy, 200, "#ff8a4a", 0.55);
+  shake(7, 0.22);
+  beep(120, 0.25, "sawtooth", 0.25);
+  const victims = blocks.filter(o => Math.hypot(o.x + o.w / 2 - cx, o.y + o.h / 2 - cy) <= R);
+  for (const o of victims) {
+    const idx = blocks.indexOf(o);
+    if (idx < 0) continue;
+    blocks.splice(idx, 1);
+    const vc = o.kind === "bomb" ? "#ff8a4a" : o.kind === "steel" ? "#c3ccdd" : ROW_COLORS[o.row];
+    dying.push({ x: o.x, y: o.y, w: o.w, h: o.h, color: vc, life: 0.28, maxLife: 0.28 });
+    spawnBurst(o.x + o.w / 2, o.y + o.h / 2, vc, 8);
+    score += 40;
+    addPopup(o.x + o.w / 2, o.y - 6, "+40", "#ffb060");
+    if (o.kind === "bomb") explodeBlock(o);
+    else if (o.kind !== "steel") maybeDropCap(o);
   }
 }
 
@@ -497,12 +539,15 @@ function collideBlocks(b) {
     const cy = clamp(b.y, bl.y, bl.y + bl.h);
     const dx = b.x - cx, dy = b.y - cy;
     if (dx * dx + dy * dy > BALL_R * BALL_R) continue;
-    if (Math.abs(dx) > Math.abs(dy)) {
-      b.x = cx + (dx >= 0 ? BALL_R : -BALL_R);
-      b.vx = (dx >= 0 ? 1 : -1) * Math.abs(b.vx);
-    } else {
-      b.y = cy + (dy >= 0 ? BALL_R : -BALL_R);
-      b.vy = (dy >= 0 ? 1 : -1) * Math.abs(b.vy);
+    const pierce = fireT > 0 && bl.kind !== "steel" && bl.kind !== "bomb";
+    if (!pierce) {
+      if (Math.abs(dx) > Math.abs(dy)) {
+        b.x = cx + (dx >= 0 ? BALL_R : -BALL_R);
+        b.vx = (dx >= 0 ? 1 : -1) * Math.abs(b.vx);
+      } else {
+        b.y = cy + (dy >= 0 ? BALL_R : -BALL_R);
+        b.vy = (dy >= 0 ? 1 : -1) * Math.abs(b.vy);
+      }
     }
     combo++;
     comboT = 2.2;
@@ -513,6 +558,7 @@ function collideBlocks(b) {
     bl.hitY = b.vy >= 0 ? -1 : 1;
     const mult = 1 + Math.min(combo, 20) * 0.05;
     const destroyed = (--bl.hp <= 0);
+    if (destroyed && bl.kind === "bomb") explodeBlock(bl);
     let base;
     if (bl.kind === "bonus") base = destroyed ? 150 : 30;
     else if (bl.kind === "steel") base = destroyed ? 200 : 40;
@@ -522,7 +568,7 @@ function collideBlocks(b) {
     addPopup(bl.x + bl.w / 2, bl.y - 6, "+" + pts, destroyed ? "#ffffff" : "#9aa7c7");
     if (destroyed) {
       blocks.splice(i, 1);
-      const burstColor = bl.kind === "bonus" ? "#ffd54a" : bl.kind === "steel" ? "#c3ccdd" : ROW_COLORS[bl.row];
+      const burstColor = bl.kind === "bonus" ? "#ffd54a" : bl.kind === "steel" ? "#c3ccdd" : bl.kind === "bomb" ? "#ff8a4a" : ROW_COLORS[bl.row];
       dying.push({ x: bl.x, y: bl.y, w: bl.w, h: bl.h, color: burstColor, life: 0.28, maxLife: 0.28 });
       spawnBurst(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 18 : 12);
       spawnShards(bl, burstColor);
@@ -553,6 +599,10 @@ function update(dt) {
 
   if (wideT > 0) wideT = Math.max(0, wideT - dt);
   if (slowT > 0) slowT = Math.max(0, slowT - dt);
+  if (laserT > 0) laserT = Math.max(0, laserT - dt);
+  if (laserCd > 0) laserCd = Math.max(0, laserCd - dt);
+  if (fireT > 0) fireT = Math.max(0, fireT - dt);
+  if (shieldT > 0) shieldT = Math.max(0, shieldT - dt);
   if (shakeT > 0) shakeT = Math.max(0, shakeT - dt);
 
   for (const s of stars) {
@@ -630,6 +680,45 @@ function update(dt) {
 
   if (state === "paused" || state === "win" || state === "lose") return;
 
+  // レーザー発射
+  if (laserT > 0 && state === "playing" && laserCd <= 0) {
+    laserCd = LASER_CD;
+    const px = paddle.x + paddle.w / 2;
+    lasers.push({ x: px - paddle.w / 2 + 6, y: PADDLE_Y - 4 });
+    lasers.push({ x: px + paddle.w / 2 - 6, y: PADDLE_Y - 4 });
+    beep(880, 0.05, "square", 0.1);
+  }
+  for (let i = lasers.length - 1; i >= 0; i--) {
+    const L = lasers[i];
+    L.y -= 720 * dt;
+    if (L.y < -10) { lasers.splice(i, 1); continue; }
+    let hit = false;
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const bl = blocks[j];
+      if (L.x >= bl.x && L.x <= bl.x + bl.w && L.y <= bl.y + bl.h && L.y >= bl.y) {
+        hit = true;
+        bl.flash = 1;
+        bl.hitShake = 1;
+        bl.hitX = 0; bl.hitY = -1;
+        spawnSparks(L.x, L.y, "#ff6bd0", 6, 160);
+        const destroyed = (--bl.hp <= 0);
+        if (destroyed) {
+          blocks.splice(j, 1);
+          score += 30;
+          addPopup(bl.x + bl.w / 2, bl.y - 6, "+30", "#ff6bd0");
+          const vc = bl.kind === "bomb" ? "#ff8a4a" : bl.kind === "steel" ? "#c3ccdd" : ROW_COLORS[bl.row];
+          dying.push({ x: bl.x, y: bl.y, w: bl.w, h: bl.h, color: vc, life: 0.28, maxLife: 0.28 });
+          spawnBurst(bl.x + bl.w / 2, bl.y + bl.h / 2, vc, 10);
+          spawnRing(bl.x + bl.w / 2, bl.y + bl.h / 2, vc, 30);
+          if (bl.kind === "bomb") explodeBlock(bl);
+          else if (bl.kind !== "steel") maybeDropCap(bl);
+        }
+        break;
+      }
+    }
+    if (hit) lasers.splice(i, 1);
+  }
+
   if (state === "levelclear") {
     clearT -= dt;
     if (Math.random() < dt * 6) spawnFirework(60 + Math.random() * (W - 120), 80 + Math.random() * (H * 0.5));
@@ -677,7 +766,17 @@ function update(dt) {
     }
     b.trail.push({ x: b.x, y: b.y });
     if (b.trail.length > 10) b.trail.shift();
-    if (b.y - BALL_R > H) balls.splice(i, 1);
+    if (b.y - BALL_R > H) {
+      if (shieldT > 0) {
+        b.y = H + BALL_R - 2;
+        b.vy = -Math.abs(b.vy);
+        spawnRing(b.x, H - 6, "#59e6d0", 40);
+        spawnSparks(b.x, H - 8, "#59e6d0", 10, 220);
+        beep(520, 0.08, "sine", 0.18);
+      } else {
+        balls.splice(i, 1);
+      }
+    }
   }
   steerIdleBalls(dt);
 
@@ -709,6 +808,7 @@ function drawBlock(b) {
   let base;
   if (b.kind === "bonus") base = "#ffd54a";
   else if (b.kind === "steel") base = damaged ? "#7f8aa0" : "#9aa6bd";
+  else if (b.kind === "bomb") base = "#3a3f52";
   else base = ROW_COLORS[b.row];
   const t = performance.now() / 1000;
 
@@ -787,6 +887,22 @@ function drawBlock(b) {
       ctx.arc(b.x + rx, b.y + ry, 2.6, 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+  if (b.kind === "bomb") {
+    // 黒い砲弾ブロック：赤い点滅ライトと信管
+    const pulse = 0.5 + 0.5 * Math.sin(t * 6 + b.x * 0.2);
+    ctx.fillStyle = "rgba(255,90,60," + (0.35 + 0.5 * pulse).toFixed(2) + ")";
+    ctx.beginPath();
+    ctx.arc(b.x + b.w / 2, b.y + b.h / 2, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,140,90,0.5)";
+    ctx.lineWidth = 1.5;
+    roundRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4, 4);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,170,120,0.7)";
+    ctx.beginPath();
+    ctx.arc(b.x + b.w / 2, b.y + b.h / 2, 8, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
   // HPリング（複数HPブロック）
@@ -1082,6 +1198,16 @@ function draw() {
   }
   for (const b of balls) {
     const pulse = 1 + 0.12 * Math.sin(performance.now() / 1000 * 8) * comboHeat;
+    if (fireT > 0) {
+      const fg = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, BALL_R * 4.2);
+      fg.addColorStop(0, "rgba(255,170,70,0.55)");
+      fg.addColorStop(0.5, "rgba(255,90,40,0.22)");
+      fg.addColorStop(1, "rgba(255,60,20,0)");
+      ctx.fillStyle = fg;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, BALL_R * 4.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
     const halo = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, BALL_R * 3.2 * pulse);
     halo.addColorStop(0, "rgba(170,215,255,0.5)");
     halo.addColorStop(0.4, "rgba(140,190,255,0.18)");
@@ -1113,6 +1239,41 @@ function draw() {
     ctx.beginPath();
     ctx.arc(b.x, b.y, BALL_R, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  // レーザー光線
+  if (lasers.length) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const L of lasers) {
+      const lg = ctx.createLinearGradient(L.x, L.y, L.x, L.y + 26);
+      lg.addColorStop(0, "rgba(255,110,210,0.95)");
+      lg.addColorStop(1, "rgba(255,110,210,0)");
+      ctx.fillStyle = lg;
+      ctx.fillRect(L.x - 1.6, L.y, 3.2, 26);
+      ctx.fillStyle = "rgba(255,235,250,0.95)";
+      ctx.fillRect(L.x - 0.7, L.y, 1.4, 14);
+    }
+    ctx.restore();
+  }
+
+  // シールド（床の防御ライン）
+  if (shieldT > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const sk = Math.min(1, shieldT / 1.5);
+    const sg = ctx.createLinearGradient(0, H - 14, 0, H);
+    sg.addColorStop(0, "rgba(89,230,208,0)");
+    sg.addColorStop(1, "rgba(89,230,208," + (0.45 * sk).toFixed(2) + ")");
+    ctx.fillStyle = sg;
+    ctx.fillRect(0, H - 14, W, 14);
+    ctx.strokeStyle = "rgba(140,255,235," + (0.75 * sk).toFixed(2) + ")";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, H - 3);
+    ctx.lineTo(W, H - 3);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1241,6 +1402,21 @@ function draw() {
   if (slowT > 0) {
     ctx.fillStyle = "#ff9f45";
     ctx.fillRect(W / 2 - 60, ty, 120 * (slowT / SLOW_TIME), 5);
+    ty += 10;
+  }
+  if (laserT > 0) {
+    ctx.fillStyle = "#ff6bd0";
+    ctx.fillRect(W / 2 - 60, ty, 120 * (laserT / LASER_TIME), 5);
+    ty += 10;
+  }
+  if (fireT > 0) {
+    ctx.fillStyle = "#ff7a3d";
+    ctx.fillRect(W / 2 - 60, ty, 120 * (fireT / FIRE_TIME), 5);
+    ty += 10;
+  }
+  if (shieldT > 0) {
+    ctx.fillStyle = "#59e6d0";
+    ctx.fillRect(W / 2 - 60, ty, 120 * (shieldT / SHIELD_TIME), 5);
   }
 
   if (muted) {

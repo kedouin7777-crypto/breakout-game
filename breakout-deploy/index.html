@@ -348,6 +348,32 @@ function collideWalls(b) {
   if (b.y < BALL_R) { b.y = BALL_R; b.vy = Math.abs(b.vy); beep(150, 0.05, "square", 0.12); }
 }
 
+// 水平走行防止：バー接触・ブロック破壊から一定時間経過すると斜め上へ修正
+const IDLE_STEER = 10;
+function steerIdleBalls(dt) {
+  for (const b of balls) {
+    if (b.stuck) continue;
+    b.idleT = (b.idleT || 0) + dt;
+    if (b.idleT >= IDLE_STEER) {
+      b.idleT = 0;
+      const sp = Math.hypot(b.vx, b.vy) || b.sp;
+      const a = Math.atan2(b.vy, b.vx);
+      const dir = b.vx >= 0 ? 1 : -1;
+      const na = dir === 1 ? -Math.PI / 4 : -Math.PI * 3 / 4;
+      let da = na - a;
+      while (da > Math.PI) da -= Math.PI * 2;
+      while (da < -Math.PI) da += Math.PI * 2;
+      const turn = clamp(da, -0.5, 0.5);
+      const a2 = a + turn;
+      b.vx = Math.cos(a2) * sp;
+      b.vy = Math.sin(a2) * sp;
+      if (b.vy > -sp * 0.35) b.vy = -sp * 0.35;
+      spawnRing(b.x, b.y, "#7ec8ff", 26);
+      beep(320, 0.05, "sine", 0.1);
+    }
+  }
+}
+
 function collidePaddle(b) {
   if (b.vy <= 0) return;
   if (b.y + BALL_R >= PADDLE_Y && b.y - BALL_R < PADDLE_Y + PADDLE_H &&
@@ -358,6 +384,7 @@ function collidePaddle(b) {
     b.vx = Math.sin(a) * b.sp;
     b.vy = -Math.cos(a) * b.sp;
     b.y = PADDLE_Y - BALL_R;
+    b.idleT = 0;
     if (combo >= 3) addPopup(b.x, b.y - 26, "COMBO " + combo, "#ffe14a");
     combo = 0;
     beep(240, 0.06, "square", 0.18);
@@ -408,6 +435,7 @@ function collideBlocks(b) {
     }
     combo++;
     comboT = 2.2;
+    b.idleT = 0;
     bl.flash = 1;
     const mult = 1 + Math.min(combo, 20) * 0.05;
     const destroyed = (--bl.hp <= 0);
@@ -525,6 +553,7 @@ function update(dt) {
     if (b.trail.length > 10) b.trail.shift();
     if (b.y - BALL_R > H) balls.splice(i, 1);
   }
+  steerIdleBalls(dt);
 
   if (balls.length === 0) {
     lives--;

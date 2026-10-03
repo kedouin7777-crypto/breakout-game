@@ -78,11 +78,11 @@ function hexToRgba(hex, a) {
 const paddle = { x: W / 2 - PADDLE_BASE_W / 2, tx: W / 2 - PADDLE_BASE_W / 2, w: PADDLE_BASE_W };
 let stage = 0;
 let blocks = [], balls = [], caps = [];
-let particles = [], popups = [], stars = [], rings = [], glows = [], sparks = [], dying = [], fireworks = [];
+let particles = [], popups = [], stars = [], rings = [], glows = [], sparks = [], dying = [], fireworks = [], shocks = [], meteors = [];
 let score = 0, lives = 3, best = 0, combo = 0;
 let state = "ready"; // ready | playing | paused | levelclear | win | lose
 let wideT = 0, slowT = 0, clearT = 0, shakeT = 0, shakeMag = 0, comboT = 0;
-let flashT = 0, flashColor = "#ffffff", paddleHitT = 0, wallHitT = 0;
+let flashT = 0, flashColor = "#ffffff", paddleHitT = 0, wallHitT = 0, vignetteT = 0;
 let muted = false;
 try { best = parseInt(localStorage.getItem("breakout_best_v2"), 10) || 0; } catch (e) {}
 
@@ -112,7 +112,7 @@ function makeBlocks(s) {
       } else {
         hp = (r === 1 || r === 2) ? 2 : 1; // 上2列が2打
       }
-      if (exists) list.push({ x, y, w: BLOCK_W, h: BLOCK_H, hp, maxHp: hp, row: r, flash: 0, kind });
+      if (exists) list.push({ x, y, w: BLOCK_W, h: BLOCK_H, hp, maxHp: hp, row: r, flash: 0, kind, hitX: 0, hitY: 0, hitShake: 0 });
     }
   }
   // ボーナス・鋼ブロックを配置
@@ -178,6 +178,26 @@ function drawBackground(t) {
 
   ctx.drawImage(nebulaImg, 0, 0);
 
+  // 床の遠近グリッド（下部に奥行き）
+  ctx.save();
+  ctx.globalAlpha = 0.10;
+  ctx.strokeStyle = "#4a76b8";
+  ctx.lineWidth = 1;
+  const horizon = H * 0.62;
+  for (let i = 1; i <= 8; i++) {
+    const y = horizon + Math.pow(i / 8, 2.2) * (H - horizon);
+    ctx.beginPath();
+    ctx.moveTo(0, y); ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+  for (let i = -10; i <= 10; i++) {
+    ctx.beginPath();
+    ctx.moveTo(W / 2 + i * 26, horizon);
+    ctx.lineTo(W / 2 + i * 130, H);
+    ctx.stroke();
+  }
+  ctx.restore();
+
   // オーロラ
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
@@ -218,6 +238,29 @@ function drawBackground(t) {
       ctx.restore();
     }
   }
+
+  // 流れ星
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const m of meteors) {
+    const a = m.life / m.max;
+    const vm = Math.hypot(m.vx, m.vy) || 1;
+    const tl = 60 * a;
+    const g = ctx.createLinearGradient(m.x, m.y, m.x - (m.vx / vm) * tl, m.y - (m.vy / vm) * tl);
+    g.addColorStop(0, "rgba(220,240,255," + (0.8 * a).toFixed(2) + ")");
+    g.addColorStop(1, "rgba(220,240,255,0)");
+    ctx.strokeStyle = g;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(m.x, m.y);
+    ctx.lineTo(m.x - (m.vx / vm) * tl, m.y - (m.vy / vm) * tl);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(240,250,255," + (0.9 * a).toFixed(2) + ")";
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function reset(full) {
@@ -225,7 +268,7 @@ function reset(full) {
   blocks = makeBlocks(stage);
   balls = [{ x: paddle.x + paddle.w / 2, y: PADDLE_Y - BALL_R - 1, vx: 0, vy: 0, stuck: true, sp: STAGE_SPEEDS[stage], trail: [] }];
   caps = []; particles = []; popups = []; rings = [];
-  glows = []; sparks = []; dying = []; fireworks = [];
+  glows = []; sparks = []; dying = []; fireworks = []; shocks = [];
   combo = 0; wideT = 0; slowT = 0; shakeT = 0;
   state = "ready";
 }
@@ -271,11 +314,14 @@ function spawnShards(bl, color) {
   }
 }
 function addPopup(x, y, text, color) {
-  popups.push({ x, y, text, color, life: 0.8 });
+  popups.push({ x, y, text, color, life: 0.8, max: 0.8 });
 }
 function shake(mag, dur) { shakeMag = mag; shakeT = dur; }
 function spawnRing(x, y, color, max) {
   rings.push({ x, y, r: 6, max: max || 34, life: 0.35, maxLife: 0.35, color });
+}
+function spawnShock(x, y, color) {
+  shocks.push({ x, y, r: 4, life: 0.4, maxLife: 0.4, color });
 }
 function addGlow(x, y, r, color, strength) {
   glows.push({ x, y, r, color, s: strength });
@@ -463,6 +509,9 @@ function collideBlocks(b) {
     comboT = 2.2;
     b.idleT = 0;
     bl.flash = 1;
+    bl.hitShake = 1;
+    bl.hitX = b.vx >= 0 ? -1 : 1;
+    bl.hitY = b.vy >= 0 ? -1 : 1;
     const mult = 1 + Math.min(combo, 20) * 0.05;
     const destroyed = (--bl.hp <= 0);
     let base;
@@ -479,6 +528,7 @@ function collideBlocks(b) {
       spawnBurst(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 18 : 12);
       spawnShards(bl, burstColor);
       spawnRing(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 46 : 32);
+      spawnShock(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor);
       spawnSparks(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 14 : 8, 240);
       addGlow(bl.x + bl.w / 2, bl.y + bl.h / 2, bl.kind === "bonus" ? 130 : 90, burstColor, bl.kind === "bonus" ? 0.5 : 0.32);
       flash(burstColor, bl.kind === "bonus" ? 0.12 : 0.05);
@@ -511,7 +561,10 @@ function update(dt) {
     s.y += s.vy * dt;
     if (s.y > H) { s.y = -2; s.x = Math.random() * W; }
   }
-  for (const bl of blocks) if (bl.flash > 0) bl.flash = Math.max(0, bl.flash - dt * 6);
+  for (const bl of blocks) {
+    if (bl.flash > 0) bl.flash = Math.max(0, bl.flash - dt * 6);
+    if (bl.hitShake > 0) bl.hitShake = Math.max(0, bl.hitShake - dt * 7);
+  }
 
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
@@ -553,9 +606,30 @@ function update(dt) {
     glows[i].s -= dt * 1.6;
     if (glows[i].s <= 0) glows.splice(i, 1);
   }
+  for (let i = shocks.length - 1; i >= 0; i--) {
+    const s = shocks[i];
+    s.life -= dt;
+    if (s.life <= 0) { shocks.splice(i, 1); continue; }
+    const k = 1 - s.life / s.maxLife;
+    s.r = 4 + 120 * (1 - Math.pow(1 - k, 3));
+  }
+  // 流れ星
+  if (Math.random() < dt * 0.35) {
+    const mx = Math.random() * W, my = Math.random() * H * 0.35;
+    const va = Math.PI * (0.15 + Math.random() * 0.2);
+    const sp = 320 + Math.random() * 260;
+    meteors.push({ x: mx, y: my, vx: Math.cos(va) * sp * (Math.random() < 0.5 ? -1 : 1), vy: Math.sin(va) * sp, life: 0.9, max: 0.9 });
+  }
+  for (let i = meteors.length - 1; i >= 0; i--) {
+    const m = meteors[i];
+    m.life -= dt;
+    if (m.life <= 0) { meteors.splice(i, 1); continue; }
+    m.x += m.vx * dt; m.y += m.vy * dt;
+  }
   if (flashT > 0) flashT = Math.max(0, flashT - dt);
   if (paddleHitT > 0) paddleHitT = Math.max(0, paddleHitT - dt);
   if (wallHitT > 0) wallHitT = Math.max(0, wallHitT - dt);
+  if (vignetteT > 0) vignetteT = Math.max(0, vignetteT - dt * 0.8);
 
   if (state === "paused" || state === "win" || state === "lose") return;
 
@@ -614,6 +688,7 @@ function update(dt) {
     lives--;
     beep(110, 0.3, "sawtooth", 0.2);
     shake(5, 0.3);
+    vignetteT = 1;
     if (lives <= 0) { state = "lose"; saveBest(); }
     else reset(false);
     return;
@@ -639,6 +714,11 @@ function drawBlock(b) {
   const t = performance.now() / 1000;
 
   ctx.save();
+  // ヒット時のシェイク（跳ね返った方向へ押し戻される揺れ）
+  if (b.hitShake > 0) {
+    const k = b.hitShake * b.hitShake;
+    ctx.translate(b.hitX * k * 5, b.hitY * k * 5);
+  }
   // 接地影
   ctx.fillStyle = "rgba(0,0,0,0.35)";
   roundRect(b.x + 2, b.y + 3, b.w, b.h, 5);
@@ -916,6 +996,15 @@ function draw() {
     ctx.lineTo(s.x - (s.vx / vm) * s.len * a, s.y - (s.vy / vm) * s.len * a);
     ctx.stroke();
   }
+  // 衝撃波（太い輪郭が素早く拡大）
+  for (const s of shocks) {
+    const a = s.life / s.maxLife;
+    ctx.strokeStyle = hexToRgba(s.color, 0.5 * a * a);
+    ctx.lineWidth = 6 * a;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   // 花火
   for (const f of fireworks) {
     const a = f.life / f.max;
@@ -977,6 +1066,7 @@ function draw() {
   ctx.restore();
 
   // ボール：ゴーストレール＋発光コア
+  const comboHeat = Math.min(1, combo / 8);
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   for (const b of balls) {
@@ -984,31 +1074,42 @@ function draw() {
     for (let i = 0; i < n; i++) {
       const tp = b.trail[i];
       const k = (i + 1) / n;
-      ctx.fillStyle = "rgba(140,190,255," + (0.16 * k * k).toFixed(3) + ")";
+      const rG = Math.round(140 + 115 * comboHeat);
+      ctx.fillStyle = "rgba(" + rG + "," + (190 - 60 * comboHeat) + ",255," + (0.16 * k * k).toFixed(3) + ")";
       ctx.beginPath();
       ctx.arc(tp.x, tp.y, BALL_R * (0.25 + 0.75 * k), 0, Math.PI * 2);
       ctx.fill();
     }
   }
   for (const b of balls) {
-    const halo = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, BALL_R * 3.2);
+    const pulse = 1 + 0.12 * Math.sin(performance.now() / 1000 * 8) * comboHeat;
+    const halo = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, BALL_R * 3.2 * pulse);
     halo.addColorStop(0, "rgba(170,215,255,0.5)");
     halo.addColorStop(0.4, "rgba(140,190,255,0.18)");
     halo.addColorStop(1, "rgba(140,190,255,0)");
     ctx.fillStyle = halo;
     ctx.beginPath();
-    ctx.arc(b.x, b.y, BALL_R * 3.2, 0, Math.PI * 2);
+    ctx.arc(b.x, b.y, BALL_R * 3.2 * pulse, 0, Math.PI * 2);
     ctx.fill();
+    if (comboHeat > 0.2) {
+      const warm = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, BALL_R * 4.6);
+      warm.addColorStop(0, "rgba(255,190,90," + (0.35 * comboHeat).toFixed(2) + ")");
+      warm.addColorStop(1, "rgba(255,120,40,0)");
+      ctx.fillStyle = warm;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, BALL_R * 4.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.restore();
   for (const b of balls) {
     ctx.save();
-    ctx.shadowColor = "#9ecbff";
-    ctx.shadowBlur = 16;
+    ctx.shadowColor = comboHeat > 0.4 ? "#ffcf7a" : "#9ecbff";
+    ctx.shadowBlur = 16 + 10 * comboHeat;
     const bg2 = ctx.createRadialGradient(b.x - 2.5, b.y - 2.5, 1, b.x, b.y, BALL_R);
     bg2.addColorStop(0, "#ffffff");
-    bg2.addColorStop(0.6, "#dcecff");
-    bg2.addColorStop(1, "#8fb8f2");
+    bg2.addColorStop(0.6, comboHeat > 0.4 ? "#ffe9c8" : "#dcecff");
+    bg2.addColorStop(1, comboHeat > 0.4 ? "#f2a95f" : "#8fb8f2");
     ctx.fillStyle = bg2;
     ctx.beginPath();
     ctx.arc(b.x, b.y, BALL_R, 0, Math.PI * 2);
@@ -1017,11 +1118,20 @@ function draw() {
   }
 
   for (const p of popups) {
+    const k = p.life / p.max;
     ctx.globalAlpha = Math.max(0, Math.min(1, p.life / 0.4));
+    // 出現直後にポップ拡大
+    const scale = 1 + 0.5 * Math.max(0, (k - 0.75)) * 4;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.scale(scale, scale);
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
     ctx.fillStyle = p.color;
     ctx.font = "bold 15px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText(p.text, p.x, p.y);
+    ctx.fillText(p.text, 0, 0);
+    ctx.restore();
   }
   ctx.globalAlpha = 1;
 
@@ -1077,6 +1187,17 @@ function draw() {
     eg.addColorStop(0, "rgba(120,180,255,0)");
     eg.addColorStop(1, "rgba(120,180,255," + (0.16 * (wallHitT / 0.12)).toFixed(3) + ")");
     ctx.fillStyle = eg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  // ライフ喪失時の赤ビネット
+  if (vignetteT > 0) {
+    ctx.save();
+    const rv = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.8);
+    rv.addColorStop(0, "rgba(255,40,40,0)");
+    rv.addColorStop(1, "rgba(255,30,30," + (0.4 * vignetteT).toFixed(3) + ")");
+    ctx.fillStyle = rv;
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
   }

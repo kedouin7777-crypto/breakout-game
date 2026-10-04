@@ -1237,6 +1237,9 @@ function draw() {
     ctx.translate(cx, cy);
     ctx.scale(1 + zk * 14, 1 + zk * 14);
     ctx.translate(-cx, -cy);
+    // 拡大範囲外（単色化して見えた部分）を埋める下地
+    ctx.fillStyle = "#02060c";
+    ctx.fillRect(-W, -H, W * 3, H * 3);
   }
   drawBackground(t);
 
@@ -1616,6 +1619,9 @@ function draw() {
   ctx.fillStyle = "#000";
   for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
   ctx.restore();
+
+  // ズーム演出の拡大変換を終了（HUD・オーバーレイは等倍で描画）
+  if (zooming) ctx.restore();
 
   // HUD（帯付きパネル）
   ctx.save();

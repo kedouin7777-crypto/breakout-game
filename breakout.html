@@ -97,6 +97,8 @@ let mode = 0;                 // 0 | 1
 let zoom = { t: 0, dur: 0, x: 0, y: 0 }; // 突入/復帰のズーム演出
 let savedOuter = null;        // 突入時の通常ステージ退避
 let pendingRecurse = null;    // 復帰後に破壊する再帰ブロック
+let returnToPaddle = false;   // 復帰演出終了後、ボールをパドル上の初期位置へ戻す
+let justReturned = false;     // 復帰直後のready表示切り替え用
 let navFade = 0;              // ナビ点線のフェード値
 let paddleHitT = 0, wallHitT = 0, vignetteT = 0;
 let muted = false;
@@ -381,7 +383,7 @@ function launch() {
       launched = true;
     }
   }
-  if (launched) state = "playing";
+  if (launched) { state = "playing"; justReturned = false; }
 }
 
 function togglePause() {
@@ -639,19 +641,14 @@ function exitRecurse() {
     spawnShock(bl.x + bl.w / 2, bl.y + bl.h / 2, "#9ff0ff");
     addGlow(bl.x + bl.w / 2, bl.y + bl.h / 2, 180, "#7ee8ff", 0.5);
     shake(6, 0.2);
-    // ボールを内部から出てきたように再配置
-    for (const bb of balls) {
-      bb.x = bl.x + bl.w / 2; bb.y = bl.y + bl.h + BALL_R + 4;
-      const sp = bb.sp || STAGE_SPEEDS[stage];
-      const a = Math.PI / 2 + (Math.random() * 0.8 - 0.4);
-      bb.vx = Math.cos(a) * sp; bb.vy = Math.abs(Math.sin(a)) * sp;
-      bb.trail = [];
-    }
+    // ボールは復帰後、パドル上の初期位置で待发射（スペース/クリックで発射）
+    balls = [{ x: paddle.x + paddle.w / 2, y: PADDLE_Y - BALL_R - 1, vx: 0, vy: 0, stuck: true, sp: STAGE_SPEEDS[stage], trail: [] }];
   }
   score += RECURSE_BONUS;
   addPopup(W / 2, H / 2 - 40, "INNER CLEAR +" + RECURSE_BONUS, "#7ee8ff");
   zoom = { t: 0, dur: 0.4, x: 0, y: 0 };
   state = "zoomout";
+  returnToPaddle = true;
   beep(300, 0.2, "triangle", 0.22);
 }
 
@@ -847,7 +844,15 @@ function update(dt) {
   }
   if (state === "zoomout") {
     zoom.t += dt;
-    if (zoom.t >= zoom.dur) { state = "playing"; }
+    if (zoom.t >= zoom.dur) {
+      if (returnToPaddle) {
+        returnToPaddle = false;
+        justReturned = true;
+        state = "ready";
+      } else {
+        state = "playing";
+      }
+    }
     return;
   }
 
@@ -1730,7 +1735,11 @@ function draw() {
       drawOverlay("内部ステージ", "#7ee8ff", ["ブロック内部に進入！", "この空間のブロックを全て壊して脱出しよう", "スペース or クリックで発射"]);
     } else {
       drawTitleDemo();
-      drawOverlay("ブロック崩し", "#7ec8ff", ["STAGE " + (stage + 1) + " / " + STAGE_SPEEDS.length, "スペース or クリックで発射", "M: 多重球  W: ワイドパドル  S: スロー  +: 残り1", "★: ボーナス   ■: 鋼ブロック（3回必要）"]);
+      if (justReturned) {
+        drawOverlay("内部から復帰", "#7ee8ff", ["INNER CLEAR +" + RECURSE_BONUS, "スペース or クリックで発射"]);
+      } else {
+        drawOverlay("ブロック崩し", "#7ec8ff", ["STAGE " + (stage + 1) + " / " + STAGE_SPEEDS.length, "スペース or クリックで発射", "M: 多重球  W: ワイドパドル  S: スロー  +: 残り1", "★: ボーナス   ■: 鋼ブロック（3回必要）"]);
+      }
     }
   } else if (state === "paused") {
     drawOverlay("一時停止", "#8fa0c4", ["P or クリックで再開"]);

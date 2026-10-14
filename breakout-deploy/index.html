@@ -38,6 +38,8 @@ const CAP_R = 13, CAP_FALL = 130, CAP_DROP = 0.24;
 const WIDE_MULT = 1.6, WIDE_TIME = 8;
 const SLOW_MULT = 0.72, SLOW_TIME = 8;
 const LASER_TIME = 7, LASER_CD = 0.5, FIRE_TIME = 6, SHIELD_TIME = 10;
+// 重力反転ブロック（破壊で重力が一定時間反転し、ボールが上へ飛ぶ）
+const GRAVITY_TIME = 5, GRAVITY_ACCEL = 380;
 // 反射角度ナビゲート（表示開始距離・線長・透明度をここで調整）
 const NAV = { showDist: 240, len: 150, alpha: 0.34, dash: [5, 7] };
 // 再帰ブロック（内部ミニステージ）
@@ -90,7 +92,7 @@ let particles = [], popups = [], stars = [], rings = [], glows = [], sparks = []
 let score = 0, lives = 3, best = 0, combo = 0;
 let state = "ready"; // ready | playing | paused | levelclear | win | lose
 let wideT = 0, slowT = 0, clearT = 0, shakeT = 0, shakeMag = 0, comboT = 0;
-let laserT = 0, laserCd = 0, fireT = 0, shieldT = 0;
+let laserT = 0, laserCd = 0, fireT = 0, shieldT = 0, gravityT = 0;
 let lasers = [];
 // 階層システム（0=通常、1=内部ミニステージ）。将来の多階層拡張を見据えた構造。
 let mode = 0;                 // 0 | 1
@@ -225,6 +227,11 @@ function makeBlocks(s) {
     for (let i = 0; i < 12; i++) {
       const idx = (Math.random() * list.length) | 0;
       if (list[idx].kind === "normal") { list[idx].kind = "recurse"; list[idx].hp = list[idx].maxHp = 1; break; }
+    }
+    // 重力反転ブロック（各ステージ1個、破壊で重力が反転する）
+    for (let i = 0; i < 12; i++) {
+      const idx = (Math.random() * list.length) | 0;
+      if (list[idx].kind === "normal") { list[idx].kind = "gravity"; list[idx].hp = list[idx].maxHp = 1; break; }
     }
   }
   return list;
@@ -437,7 +444,7 @@ function reset(full) {
   caps = []; particles = []; popups = []; rings = [];
   glows = []; sparks = []; dying = []; fireworks = []; shocks = []; meteors = []; lasers = [];
   combo = 0; wideT = 0; slowT = 0; shakeT = 0;
-  laserT = 0; laserCd = 0; fireT = 0; shieldT = 0;
+  laserT = 0; laserCd = 0; fireT = 0; shieldT = 0; gravityT = 0;
   state = "ready";
 }
 
@@ -669,7 +676,7 @@ function enterRecurse(bl, b) {
   // 通常ステージを退避し、ズーム演出後に内部ミニステージへ
   savedOuter = {
     blocks: blocks, balls: balls, caps: caps,
-    wideT: wideT, slowT: slowT, laserT: laserT, fireT: fireT, shieldT: shieldT
+    wideT: wideT, slowT: slowT, laserT: laserT, fireT: fireT, shieldT: shieldT, gravityT: gravityT
   };
   pendingRecurse = bl;
   b.x = bl.x + bl.w / 2; b.y = bl.y + bl.h / 2;
@@ -698,7 +705,7 @@ function exitRecurse() {
   balls = savedOuter.balls;
   caps = savedOuter.caps;
   wideT = savedOuter.wideT; slowT = savedOuter.slowT; laserT = savedOuter.laserT;
-  fireT = savedOuter.fireT; shieldT = savedOuter.shieldT;
+  fireT = savedOuter.fireT; shieldT = savedOuter.shieldT; gravityT = savedOuter.gravityT;
   savedOuter = null; pendingRecurse = null;
   if (bl) {
     const idx = blocks.indexOf(bl);
@@ -776,6 +783,14 @@ function collideBlocks(b) {
     const mult = 1 + Math.min(combo, 20) * 0.05;
     const destroyed = (--bl.hp <= 0);
     if (destroyed && bl.kind === "bomb") explodeBlock(bl);
+    if (destroyed && bl.kind === "gravity") {
+      gravityT = GRAVITY_TIME;
+      addPopup(bl.x + bl.w / 2, bl.y - 22, "重力反転!", "#c77dff");
+      spawnShock(bl.x + bl.w / 2, bl.y + bl.h / 2, "#c77dff");
+      shake(4, 0.18);
+      beep(160, 0.4, "sine", 0.2);
+      setTimeout(() => beep(80, 0.5, "sine", 0.18), 120);
+    }
     let base;
     if (bl.kind === "bonus") base = destroyed ? 150 : 30;
     else if (bl.kind === "steel") base = destroyed ? 200 : 40;
@@ -785,7 +800,7 @@ function collideBlocks(b) {
     addPopup(bl.x + bl.w / 2, bl.y - 6, "+" + pts, destroyed ? "#ffffff" : "#9aa7c7");
     if (destroyed) {
       blocks.splice(i, 1);
-      const burstColor = bl.kind === "bonus" ? "#ffd54a" : bl.kind === "steel" ? "#c3ccdd" : bl.kind === "bomb" ? "#ff8a4a" : ROW_COLORS[bl.row];
+      const burstColor = bl.kind === "bonus" ? "#ffd54a" : bl.kind === "steel" ? "#c3ccdd" : bl.kind === "bomb" ? "#ff8a4a" : bl.kind === "gravity" ? "#c77dff" : ROW_COLORS[bl.row];
       dying.push({ x: bl.x, y: bl.y, w: bl.w, h: bl.h, color: burstColor, life: 0.28, maxLife: 0.28 });
       spawnBurst(bl.x + bl.w / 2, bl.y + bl.h / 2, burstColor, bl.kind === "bonus" ? 18 : 12);
       spawnShards(bl, burstColor);
@@ -820,6 +835,7 @@ function update(dt) {
   if (laserCd > 0) laserCd = Math.max(0, laserCd - dt);
   if (fireT > 0) fireT = Math.max(0, fireT - dt);
   if (shieldT > 0) shieldT = Math.max(0, shieldT - dt);
+  if (gravityT > 0) gravityT = Math.max(0, gravityT - dt);
   if (shakeT > 0) shakeT = Math.max(0, shakeT - dt);
 
   for (const s of stars) {
@@ -1000,6 +1016,11 @@ function update(dt) {
   const slowMult = slowT > 0 ? SLOW_MULT : 1;
   for (let i = balls.length - 1; i >= 0; i--) {
     const b = balls[i];
+    if (gravityT > 0 && !b.stuck) {
+      b.vy -= GRAVITY_ACCEL * dt;
+      const sp = Math.hypot(b.vx, b.vy);
+      if (sp > MAX_SPEED) { b.vx = b.vx / sp * MAX_SPEED; b.vy = b.vy / sp * MAX_SPEED; }
+    }
     const dist = Math.hypot(b.vx, b.vy) * slowMult * dt;
     const steps = Math.max(1, Math.ceil(dist / 3));
     for (let s = 0; s < steps; s++) {
@@ -1056,6 +1077,7 @@ function drawBlock(b) {
   else if (b.kind === "steel") base = damaged ? "#7f8aa0" : "#9aa6bd";
   else if (b.kind === "bomb") base = "#3a3f52";
   else if (b.kind === "recurse") base = "#123a4a";
+  else if (b.kind === "gravity") base = "#3a1a52";
   else base = ROW_COLORS[b.row];
   const t = performance.now() / 1000;
 
@@ -1187,6 +1209,28 @@ function drawBlock(b) {
     ctx.lineWidth = 1.5;
     roundRect(b.x + 1.5, b.y + 1.5, b.w - 3, b.h - 3, 4);
     ctx.stroke();
+  }
+  if (b.kind === "gravity") {
+    // 重力反転ブロック：紫色の脈動発光と上向き矢印
+    const pulse = 0.5 + 0.5 * Math.sin(t * 3 + b.x * 0.1);
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    ctx.shadowColor = "#c77dff";
+    ctx.shadowBlur = 8 + 8 * pulse;
+    ctx.strokeStyle = "rgba(199,125,255," + (0.5 + 0.4 * pulse).toFixed(2) + ")";
+    ctx.lineWidth = 1.5;
+    roundRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, 4);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 上向き矢印（浮き上がる方向を示す）
+    ctx.fillStyle = "rgba(240,220,255," + (0.75 + 0.2 * pulse).toFixed(2) + ")";
+    const ay = cy - 2 + Math.sin(t * 4 + b.x * 0.1) * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, ay - 5);
+    ctx.lineTo(cx + 5, ay + 2);
+    ctx.lineTo(cx - 5, ay + 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(cx - 1.6, ay + 2, 3.2, 5);
   }
 
   // HPリング（複数HPブロック）
@@ -1786,6 +1830,10 @@ function draw() {
     ctx.fillStyle = "#59e6d0";
     ctx.fillRect(W / 2 - 60, ty, 120 * (shieldT / SHIELD_TIME), 5);
   }
+  if (gravityT > 0) {
+    ctx.fillStyle = "#c77dff";
+    ctx.fillRect(W / 2 - 60, ty, 120 * (gravityT / GRAVITY_TIME), 5);
+  }
 
   if (muted) {
     ctx.fillStyle = "#5a657d";
@@ -1833,6 +1881,13 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+window.__dbg = {
+  get blocks(){ return blocks; },
+  get gravityT(){ return gravityT; },
+  get state(){ return state; },
+  get balls(){ return balls; },
+  GRAVITY_TIME, GRAVITY_ACCEL
+};
 })();
 </script>
 </body>

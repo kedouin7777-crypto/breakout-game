@@ -40,6 +40,9 @@ const SLOW_MULT = 0.72, SLOW_TIME = 8;
 const LASER_TIME = 7, LASER_CD = 0.5, FIRE_TIME = 6, SHIELD_TIME = 10;
 // 重力反転ブロック（破壊で重力が一定時間反転し、ボールが上へ飛ぶ）
 const GRAVITY_TIME = 5, GRAVITY_ACCEL = 380;
+// ブラックホール（出現範囲のボールを吸い寄せ、核心に触れた球は吸い込まれ再放出される）
+const BH_TIME = 6, BH_RANGE = 190, BH_CORE = 16, BH_PULL = 300;
+const BH_CD_MIN = 8, BH_CD_MAX = 14;
 // 反射角度ナビゲート（表示開始距離・線長・透明度をここで調整）
 const NAV = { showDist: 240, len: 150, alpha: 0.34, dash: [5, 7] };
 // 再帰ブロック（内部ミニステージ）
@@ -93,6 +96,8 @@ let score = 0, lives = 3, best = 0, combo = 0;
 let state = "ready"; // ready | playing | paused | levelclear | win | lose
 let wideT = 0, slowT = 0, clearT = 0, shakeT = 0, shakeMag = 0, comboT = 0;
 let laserT = 0, laserCd = 0, fireT = 0, shieldT = 0, gravityT = 0;
+let bh = null;        // { x, y, t } 現在活動中のブラックホール
+let bhCd = BH_CD_MIN + (BH_CD_MAX - BH_CD_MIN) * Math.random();
 let lasers = [];
 // 階層システム（0=通常、1=内部ミニステージ）。将来の多階層拡張を見据えた構造。
 let mode = 0;                 // 0 | 1
@@ -445,6 +450,7 @@ function reset(full) {
   glows = []; sparks = []; dying = []; fireworks = []; shocks = []; meteors = []; lasers = [];
   combo = 0; wideT = 0; slowT = 0; shakeT = 0;
   laserT = 0; laserCd = 0; fireT = 0; shieldT = 0; gravityT = 0;
+  if (full) { bh = null; bhCd = BH_CD_MIN + (BH_CD_MAX - BH_CD_MIN) * Math.random(); }
   state = "ready";
 }
 
@@ -676,7 +682,8 @@ function enterRecurse(bl, b) {
   // 通常ステージを退避し、ズーム演出後に内部ミニステージへ
   savedOuter = {
     blocks: blocks, balls: balls, caps: caps,
-    wideT: wideT, slowT: slowT, laserT: laserT, fireT: fireT, shieldT: shieldT, gravityT: gravityT
+    wideT: wideT, slowT: slowT, laserT: laserT, fireT: fireT, shieldT: shieldT, gravityT: gravityT,
+    bh: bh, bhCd: bhCd
   };
   pendingRecurse = bl;
   b.x = bl.x + bl.w / 2; b.y = bl.y + bl.h / 2;
@@ -706,6 +713,7 @@ function exitRecurse() {
   caps = savedOuter.caps;
   wideT = savedOuter.wideT; slowT = savedOuter.slowT; laserT = savedOuter.laserT;
   fireT = savedOuter.fireT; shieldT = savedOuter.shieldT; gravityT = savedOuter.gravityT;
+  bh = savedOuter.bh; bhCd = savedOuter.bhCd;
   savedOuter = null; pendingRecurse = null;
   if (bl) {
     const idx = blocks.indexOf(bl);
@@ -837,6 +845,34 @@ function update(dt) {
   if (shieldT > 0) shieldT = Math.max(0, shieldT - dt);
   if (gravityT > 0) gravityT = Math.max(0, gravityT - dt);
   if (shakeT > 0) shakeT = Math.max(0, shakeT - dt);
+
+  // ブラックホールの出現（ランダム間隔）と消滅
+  if (state === "playing") {
+    if (bh) {
+      bh.t -= dt;
+      if (bh.t <= 0) {
+        spawnRing(bh.x, bh.y, "#7ee8ff", 60);
+        spawnShock(bh.x, bh.y, "#7ee8ff");
+        bh = null;
+        bhCd = BH_CD_MIN + (BH_CD_MAX - BH_CD_MIN) * Math.random();
+      }
+    } else {
+      bhCd -= dt;
+      if (bhCd <= 0) {
+        bh = {
+          x: 60 + Math.random() * (W - 120),
+          y: TOP + 30 + Math.random() * (H - TOP - 170),
+          t: BH_TIME
+        };
+        spawnRing(bh.x, bh.y, "#7ee8ff", 60);
+        spawnShock(bh.x, bh.y, "#7ee8ff");
+        addPopup(bh.x, bh.y - 26, "ブラックホール!", "#c77dff");
+        shake(3, 0.15);
+        beep(200, 0.3, "sine", 0.16);
+        setTimeout(() => beep(60, 0.4, "sine", 0.14), 100);
+      }
+    }
+  }
 
   for (const s of stars) {
     s.y += s.vy * dt;
@@ -1021,6 +1057,18 @@ function update(dt) {
       const sp = Math.hypot(b.vx, b.vy);
       if (sp > MAX_SPEED) { b.vx = b.vx / sp * MAX_SPEED; b.vy = b.vy / sp * MAX_SPEED; }
     }
+    // ブラックホールの引力（出現範囲内では中心へ引き寄せられる）
+    if (bh && !b.stuck) {
+      const ddx = bh.x - b.x, ddy = bh.y - b.y;
+      const dd = Math.hypot(ddx, ddy);
+      if (dd < BH_RANGE && dd > 0.001) {
+        const pull = BH_PULL * (1 - dd / BH_RANGE);
+        b.vx += (ddx / dd) * pull * dt;
+        b.vy += (ddy / dd) * pull * dt;
+        const sp = Math.hypot(b.vx, b.vy);
+        if (sp > MAX_SPEED) { b.vx = b.vx / sp * MAX_SPEED; b.vy = b.vy / sp * MAX_SPEED; }
+      }
+    }
     const dist = Math.hypot(b.vx, b.vy) * slowMult * dt;
     const steps = Math.max(1, Math.ceil(dist / 3));
     for (let s = 0; s < steps; s++) {
@@ -1041,6 +1089,30 @@ function update(dt) {
         beep(520, 0.08, "sine", 0.18);
       } else {
         balls.splice(i, 1);
+      }
+    }
+  }
+  // ブラックホールの核心に触れたボールは吸い込まれ、ランダムな外向きに再放出される
+  if (bh) {
+    for (let i = 0; i < balls.length; i++) {
+      const b = balls[i];
+      if (b.stuck) continue;
+      const ddx = bh.x - b.x, ddy = bh.y - b.y;
+      if (Math.hypot(ddx, ddy) <= BH_CORE + BALL_R) {
+        const a = Math.random() * Math.PI * 2;
+        b.x = bh.x + Math.cos(a) * (BH_CORE + BALL_R + 2);
+        b.y = bh.y + Math.sin(a) * (BH_CORE + BALL_R + 2);
+        const sp = b.sp || STAGE_SPEEDS[stage];
+        b.vx = Math.cos(a) * sp;
+        b.vy = Math.sin(a) * sp;
+        b.trail.length = 0;
+        spawnRing(bh.x, bh.y, "#c77dff", 44);
+        spawnShock(bh.x, bh.y, "#c77dff");
+        spawnBurst(bh.x, bh.y, "#c77dff", 14);
+        shake(3, 0.12);
+        beep(90, 0.25, "sine", 0.2);
+        setTimeout(() => beep(220, 0.12, "sine", 0.14), 80);
+        break;
       }
     }
   }
@@ -1365,6 +1437,55 @@ function draw() {
   if (shakeT > 0) ctx.translate((Math.random() * 2 - 1) * shakeMag, (Math.random() * 2 - 1) * shakeMag);
 
   for (const b of blocks) drawBlock(b);
+
+  // ブラックホール（回転する吸積環と渦）
+  if (bh) {
+    const t2 = performance.now() / 1000;
+    const cx = bh.x, cy = bh.y;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, BH_RANGE * 0.5);
+    grad.addColorStop(0, "rgba(199,125,255,0.30)");
+    grad.addColorStop(0.5, "rgba(126,232,255,0.10)");
+    grad.addColorStop(1, "rgba(126,232,255,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, BH_RANGE * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // 核心（暗黒球）
+    ctx.save();
+    ctx.fillStyle = "#05060a";
+    ctx.shadowColor = "#c77dff";
+    ctx.shadowBlur = 22;
+    ctx.beginPath();
+    ctx.arc(cx, cy, BH_CORE, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // 吸積環
+    ctx.save();
+    ctx.strokeStyle = hexToRgba("#7ee8ff", 0.7);
+    ctx.lineWidth = 2.5;
+    ctx.shadowColor = "#7ee8ff";
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(cx, cy, BH_CORE + 5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    // 渦を巻く粒子
+    ctx.save();
+    for (let i = 0; i < 10; i++) {
+      const a = t2 * 3.2 + i * (Math.PI * 2 / 10);
+      const r = BH_CORE + 9 + (i % 3) * 5;
+      const ox = cx + Math.cos(a) * r;
+      const oy = cy + Math.sin(a) * r;
+      ctx.fillStyle = hexToRgba(i % 2 ? "#c77dff" : "#7ee8ff", 0.85);
+      ctx.beginPath();
+      ctx.arc(ox, oy, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 
   // 破壊ブロックの縮小フェード
   for (const d of dying) {
@@ -1886,7 +2007,9 @@ window.__dbg = {
   get gravityT(){ return gravityT; },
   get state(){ return state; },
   get balls(){ return balls; },
-  GRAVITY_TIME, GRAVITY_ACCEL
+  get bh(){ return bh; },
+  get bhCd(){ return bhCd; },
+  GRAVITY_TIME, GRAVITY_ACCEL, BH_TIME, BH_RANGE, BH_CORE, BH_PULL
 };
 })();
 </script>

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEON ORBIT BREAKER — 縁を走るブロック崩し</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="loaderr" style="display:none;position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#3a1010;color:#ffb8b8;border:1px solid #ff8080;padding:8px 10px;font:12px/1.5 monospace;border-radius:6px;max-height:40vh;overflow:auto;white-space:pre-wrap"></div>
+<script>
+window.__showLoadErr = function (msg) {
+  var el = document.getElementById('loaderr');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent += msg + '\n';
+};
+window.addEventListener('error', function (e) {
+  window.__showLoadErr('[ERROR] ' + (e.message || 'unknown'));
+});
+</script>
+<div class="stage">
+  <canvas id="game" width="960" height="680"></canvas>
+  <div class="help">
+    マウス: 縁を移動(上下左右+四隅の反射台) / 端ほど反射角度が変わる / 点線: 予測反射ガイド / クリック: 発射 / Space長押し: バレットタイム / R: リスタート / M: サウンド / N: 変な演出ON/OFF
+  </div>
+</div>
+<script src="game.js"></script>
+<script src="funny.js"></script>
+</body>
+</html>

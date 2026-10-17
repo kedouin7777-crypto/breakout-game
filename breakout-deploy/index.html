@@ -2050,8 +2050,21 @@ window.__dbg = {
   get state(){ return state; },
   get balls(){ return balls; },
   get paddle(){ return paddle; },
+  get score(){ return score; },
   get bh(){ return bh; },
   get bhCd(){ return bhCd; },
+  // 救済用ブラックホール生成(演出・効果音つき)。既に活動中ならfalse
+  spawnBh(x, y) {
+    if (bh) return false;
+    bh = { x: clamp(x, 40, W - 40), y: clamp(y, 60, H - 150), t: BH_TIME };
+    spawnRing(bh.x, bh.y, "#c77dff", 60);
+    spawnShock(bh.x, bh.y, "#c77dff");
+    addPopup(bh.x, bh.y - 26, "救済ブラックホール!", "#c77dff");
+    shake(3, 0.15);
+    beep(90, 0.35, "sine", 0.16);
+    setTimeout(() => beep(55, 0.4, "sine", 0.14), 100);
+    return true;
+  },
   GRAVITY_TIME, GRAVITY_ACCEL, BH_TIME, BH_RANGE, BH_CORE, BH_PULL
 };
 })();

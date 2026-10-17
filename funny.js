@@ -85,6 +85,8 @@
   // ---------- ゲーム状態スナップショット ----------
   const V = { state: 'ready', stage: 0, score: 0, lives: 3, blocks: [], balls: [], paddle: { x: 0, w: 110 }, combo: 0 };
   let prevAlive = null, prevBalls = null, prevPaddleX = null, prevDir = 1;
+  let prevScore = null;
+  let lastBlockTouch = performance.now();
   let stageLosses = 0;
 
   // ---------- 表記コンテナ ----------
@@ -103,7 +105,7 @@
   let heat = 0, tempCd = 0;
   let faceT = 0, faceCd = 0;
   let bubbleCd = 12, randomEvTimer = rnd(14, 35), randomAssetTimer = rnd(70, 180);
-  const cd = {};
+  const cd = { speed: 0, ah: 0, panic: 0, crowd: 0, giant: 0, bubble: 0, temp: 0, stuck: 0 };
   let lastPaddleHits = [];
 
   function toast(text, dur, size, color) { toasts.push({ text, t: 0, dur: dur || 2.6, size: size || 14, color: color || '#ffe14a' }); if (toasts.length > 4) toasts.shift(); }
@@ -181,6 +183,7 @@
 
   function onBallLost() {
     S.losses++; stageLosses++;
+    lastBlockTouch = performance.now();
     const x = Math.round(V.paddle.x + V.paddle.w / 2);
     S.lossPositions.push(x);
     while (S.lossPositions.length > 8) S.lossPositions.shift();
@@ -291,6 +294,27 @@
 
   // ---------- 更新 ----------
   let idleTimer = 0;
+  function dbgSpawnReady() {
+    try { return !!(window.__dbg && window.__dbg.spawnBh); } catch (e) { return false; }
+  }
+  // ---------- 停滞救済: 10秒以上ブロック無接触ならボール付近へブラックホール ----------
+  function rescueBh(dbg) {
+    if (!dbg || !dbg.spawnBh) return false;
+    const nb = V.balls.find(b => !b.stuck);
+    if (!nb) return false;
+    // ボールの進行方向に配置して吸入→放出させる
+    const sp = Math.hypot(nb.vx, nb.vy) || 1;
+    const ux = nb.vx / sp, uy = nb.vy / sp;
+    const ok = dbg.spawnBh(nb.x + ux * 130, nb.y + uy * 130);
+    if (!ok) return false;
+    bannerShow('ESCAPE SUPPORT', '', 1.6, 22);
+    toast('10秒以上ブロックに触れていないため救済ブラックホールを配置しました', 3, 12, '#c77dff');
+    try {
+      if (typeof beep === 'function') { beep(90, 0.35, 'sine', 0.18); setTimeout(() => beep(55, 0.4, 'sine', 0.15), 100); }
+    } catch (e) {}
+    return true;
+  }
+
   function onUpdate(dt) {
     dt = clamp(dt, 0.001, 0.033);
     // ゲーム状態の実体参照(window.__dbgのgetter経由)
@@ -299,6 +323,10 @@
       V.state = dbg.state; V.stage = dbg.stage;
       V.blocks = dbg.blocks; V.balls = dbg.balls;
       V.paddle = dbg.paddle;
+      if (typeof dbg.score === 'number') {
+        if (prevScore == null) prevScore = dbg.score;
+        else if (dbg.score > prevScore) { lastBlockTouch = performance.now(); prevScore = dbg.score; }
+      }
     }
     tickCd(dt);
     if (V.state === 'playing') { S.playTime += dt; idleTimer += dt; } else idleTimer = 0;
@@ -407,6 +435,11 @@
       randomAssetTimer -= dt;
     }
 
+    // 停滞救済ブラックホール(救済中は遊びイベントを抑制)
+    if (funnyOn && V.state === 'playing' && performance.now() - lastBlockTouch >= 10000 && cd['stuck'] <= 0) {
+      if (rescueBh(dbg)) { openCd('stuck', 35); lastBlockTouch = performance.now(); randomEvTimer = Math.max(randomEvTimer, 20); }
+    }
+
     checkAch();
   }
   function saveDirStatsDebounce() { if (saveT > performance.now()) return; saveT = performance.now() + 3000; saveLS('breakout_dirs_v2', { accumL: S.dirAccumL, accumR: S.dirAccumR }); }
@@ -420,7 +453,7 @@
   }
   function onGameOver() { stageLosses = 0; if (funnyOn) showResults('lose'); }
   function onWin() { if (funnyOn) showResults('win'); }
-  function onReset() { results = null; panic = null; assets = null; giant = null; bubble = null; stageLosses = 0; }
+  function onReset() { results = null; panic = null; assets = null; giant = null; bubble = null; stageLosses = 0; prevScore = null; lastBlockTouch = performance.now(); }
   function spawnCrowdForced() { crowd = { t: 0, dur: 4, count: 8, big: true }; }
 
   // ---------- 描画 ----------
@@ -684,6 +717,7 @@
         randomEvent: () => pick(RANDOM_EVENTS)(),
         report: () => { showResults('lose'); },
         ah: () => { const nb = V.balls.find(b => !b.stuck); ahs.push({ x: nb ? nb.x : W / 2, y: PADDLE_Y - 40, t: 0 }); },
+        rescueBh: () => { lastBlockTouch = performance.now() - 20000; },
         paddleTemp: () => { heat = 0; tempPanel = { t: 0, dur: 2, kind: 'temp', lines: ['PADDLE TEMP 132°C', '※冷却は当てにしないでください'] }; },
         face: () => { faceT = 4; },
       };
@@ -695,6 +729,7 @@
         results: !!results, panic: !!panic, assets: !!assets, giant: !!giant, crowd: !!crowd,
         temp: tempPanel && tempPanel.lines[0], bubble: bubble && bubble.text, ahs: ahs.length, face: faceT > 0,
         ach: unlocked, heat: Math.round(heat), maxKmh: Math.round(S.maxKmh),
+        rescue: { age: Math.round(performance.now() - lastBlockTouch), cdStuck: Math.round((cd['stuck'] || 0) * 10) / 10, spawnReady: !!dbgSpawnReady() },
       };
     },
   };

@@ -1123,6 +1123,7 @@ function update(dt) {
 
   if (balls.length === 0) {
     lives--;
+    if (window.FB) FB.onBallLost();
     beep(110, 0.3, "sawtooth", 0.2);
     shake(5, 0.3);
     vignetteT = 1;
@@ -2010,6 +2011,7 @@ window.__dbg = {
   get gravityT(){ return gravityT; },
   get state(){ return state; },
   get balls(){ return balls; },
+  get paddle(){ return paddle; },
   get bh(){ return bh; },
   get bhCd(){ return bhCd; },
   GRAVITY_TIME, GRAVITY_ACCEL, BH_TIME, BH_RANGE, BH_CORE, BH_PULL

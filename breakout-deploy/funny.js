@@ -293,6 +293,13 @@
   let idleTimer = 0;
   function onUpdate(dt) {
     dt = clamp(dt, 0.001, 0.033);
+    // ゲーム状態の実体参照(window.__dbgのgetter経由)
+    const dbg = window.__dbg;
+    if (dbg) {
+      V.state = dbg.state; V.stage = dbg.stage;
+      V.blocks = dbg.blocks; V.balls = dbg.balls;
+      V.paddle = dbg.paddle;
+    }
     tickCd(dt);
     if (V.state === 'playing') { S.playTime += dt; idleTimer += dt; } else idleTimer = 0;
     if (faceT > 0) faceT -= dt;
@@ -345,9 +352,7 @@
     if (prevAlive != null && alive === prevAlive) S.blockCollisions += 0;
     prevAlive = alive;
 
-    // ボール落下検知
-    if (prevBalls != null && V.balls.length < prevBalls) onBallLost();
-    prevBalls = V.balls.length;
+    // ボール落下はFB.onBallLostフックで検知(二重検知防止)
 
     // 速度記録&速度違反
     const kmh = maxBallKmh();
@@ -667,6 +672,7 @@
   // 公開
   window.FB = {
     onUpdate, onPaddleHit, onWallHit, onStageClear, onGameOver, onWin, onReset,
+    onBlocksDestroyed, onBallLost,
     trigger(id) {
       const map = {
         speedViolation: () => { openCd('speed', 0); const kmh = Math.max(maxBallKmh(), 284); tempPanel = { t: 0, dur: 2.8, kind: 'speed', lines: ['BALL SPEED LIMIT EXCEEDED', '現在速度: ' + Math.round(kmh) + ' km/h', '制限速度: ' + 120 + ' km/h', '反則金: ' + (Math.random() * 7 + 1 | 0) * 50 + ' POINT', '※実際には徴収されません'] }; },

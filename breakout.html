@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ブロック崩し</title>
 <style>
   html, body {
@@ -19,7 +20,27 @@
 </style>
 </head>
 <body>
+<div id="loaderr" style="display:none;position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#3a1010;color:#ffb8b8;border:1px solid #ff8080;padding:8px 10px;font:12px/1.5 monospace;border-radius:6px;max-height:40vh;overflow:auto;white-space:pre-wrap"></div>
+<script>
+window.__showLoadErr = function (msg) {
+  var el = document.getElementById('loaderr');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent += msg + '\n';
+};
+window.addEventListener('error', function (e) {
+  window.__showLoadErr('[ERROR] ' + (e.message || 'unknown') + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : ''));
+});
+window.addEventListener('unhandledrejection', function (e) {
+  window.__showLoadErr('[PROMISE] ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+});
+</script>
 <canvas id="game" width="800" height="600"></canvas>
+<noscript>
+  <div style="position:fixed;inset:0;background:#0a0d14;color:#8fa7ff;display:flex;align-items:center;justify-content:center;font-size:16px;z-index:9999;text-align:center;padding:24px">
+    ブロック崩しはJavaScriptを使用します。ブラウザーの設定でJavaScriptを有効にしてください。
+  </div>
+</noscript>
 <script>
 (() => {
 "use strict";

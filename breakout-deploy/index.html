@@ -443,6 +443,7 @@ function drawBackground(t) {
 }
 
 function reset(full) {
+  if (window.FB) FB.onReset(full);
   if (full) { stage = 0; score = 0; lives = 3; pickStagePatterns(); }
   blocks = makeBlocks(stage);
   balls = [{ x: paddle.x + paddle.w / 2, y: PADDLE_Y - BALL_R - 1, vx: 0, vy: 0, stuck: true, sp: STAGE_SPEEDS[stage], trail: [] }];
@@ -593,9 +594,9 @@ canvas.addEventListener("touchmove", (e) => {
 
 // ---- 衝突 ----
 function collideWalls(b) {
-  if (b.x < BALL_R) { b.x = BALL_R; b.vx = Math.abs(b.vx); beep(150, 0.05, "square", 0.12); spawnSparks(BALL_R, b.y, "#9ecbff", 6, 140); wallHitT = 0.12; }
-  else if (b.x > W - BALL_R) { b.x = W - BALL_R; b.vx = -Math.abs(b.vx); beep(150, 0.05, "square", 0.12); spawnSparks(W - BALL_R, b.y, "#9ecbff", 6, 140); wallHitT = 0.12; }
-  if (b.y < BALL_R) { b.y = BALL_R; b.vy = Math.abs(b.vy); beep(150, 0.05, "square", 0.12); spawnSparks(b.x, BALL_R, "#9ecbff", 6, 140); wallHitT = 0.12; }
+  if (b.x < BALL_R) { b.x = BALL_R; b.vx = Math.abs(b.vx); beep(150, 0.05, "square", 0.12); spawnSparks(BALL_R, b.y, "#9ecbff", 6, 140); wallHitT = 0.12; if (window.FB) FB.onWallHit("L"); }
+  else if (b.x > W - BALL_R) { b.x = W - BALL_R; b.vx = -Math.abs(b.vx); beep(150, 0.05, "square", 0.12); spawnSparks(W - BALL_R, b.y, "#9ecbff", 6, 140); wallHitT = 0.12; if (window.FB) FB.onWallHit("R"); }
+  if (b.y < BALL_R) { b.y = BALL_R; b.vy = Math.abs(b.vy); beep(150, 0.05, "square", 0.12); spawnSparks(b.x, BALL_R, "#9ecbff", 6, 140); wallHitT = 0.12; if (window.FB) FB.onWallHit("T"); }
 }
 
 // 水平走行防止：バー接触・ブロック破壊から一定時間経過すると斜め上へ修正
@@ -641,6 +642,7 @@ function collidePaddle(b) {
     if (combo >= 3) addPopup(b.x, b.y - 26, "COMBO " + combo, "#ffe14a");
     combo = 0;
     beep(240, 0.06, "square", 0.18);
+    if (window.FB) FB.onPaddleHit(b);
   }
 }
 
@@ -828,6 +830,7 @@ function collideBlocks(b) {
 
 // ---- 更新 ----
 function update(dt) {
+  if (window.FB) FB.onUpdate(dt);
   if (keys["ArrowLeft"] || keys["KeyA"]) paddle.tx -= PADDLE_SPEED * dt;
   if (keys["ArrowRight"] || keys["KeyD"]) paddle.tx += PADDLE_SPEED * dt;
   paddle.tx = clamp(paddle.tx, 0, W - paddle.w);
@@ -1021,8 +1024,8 @@ function update(dt) {
     if (Math.random() < dt * 6) spawnFirework(60 + Math.random() * (W - 120), 80 + Math.random() * (H * 0.5));
     if (clearT <= 0) {
       stage++;
-      if (stage >= STAGE_SPEEDS.length) { state = "win"; winJingle(); saveBest(); }
-      else reset(false);
+      if (stage >= STAGE_SPEEDS.length) { state = "win"; winJingle(); saveBest(); if (window.FB) FB.onWin(); }
+      else { reset(false); if (window.FB) FB.onStageClear(); }
     }
     return;
   }
@@ -1123,7 +1126,7 @@ function update(dt) {
     beep(110, 0.3, "sawtooth", 0.2);
     shake(5, 0.3);
     vignetteT = 1;
-    if (lives <= 0) { state = "lose"; saveBest(); }
+    if (lives <= 0) { state = "lose"; saveBest(); if (window.FB) FB.onGameOver(); }
     else reset(false);
     return;
   }
@@ -2013,5 +2016,6 @@ window.__dbg = {
 };
 })();
 </script>
+<script src="funny.js"></script>
 </body>
 </html>

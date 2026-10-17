@@ -2019,11 +2019,28 @@ function draw() {
 stars = makeStars();
 reset(true);
 let last = performance.now();
+let loopDead = false;
 function frame(now) {
+  if (loopDead) return;
   const dt = Math.min((now - last) / 1000, 0.033);
   last = now;
-  update(dt);
-  draw();
+  try {
+    update(dt);
+    draw();
+  } catch (err) {
+    // 描画エラーでも真っ暗を避ける: ゲーム停止+画面に原因を表示
+    console.error(err);
+    if (window.__showLoadErr) window.__showLoadErr('[RENDER] ' + (err && err.message ? err.message + '\n' + (err.stack || '').split('\n').slice(0, 3).join('\n') : err));
+    ctx.fillStyle = "#1a0d0d";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#ff9b9b";
+    ctx.font = "13px monospace";
+    const lines = String(err && (err.stack || err.message) || err).split("\n").slice(0, 10);
+    lines.forEach((l, i) => ctx.fillText(l, 12, 40 + i * 16));
+    requestAnimationFrame(frame);
+    loopDead = true;
+    return;
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -2040,5 +2057,23 @@ window.__dbg = {
 })();
 </script>
 <script src="funny.js"></script>
+<script>
+// 描画が真っ暗のまま検知（4秒後、canvasが背景色のままなら表示する）
+setTimeout(function () {
+  try {
+    var cv = document.getElementById('game');
+    if (!cv) return;
+    var ctx = cv.getContext('2d');
+    var img = ctx.getImageData(0, 0, cv.width, cv.height).data;
+    var bright = 0;
+    for (var i = 0; i < img.length; i += 400) {
+      if ((img[i] + img[i + 1] + img[i + 2]) / 3 > 40) bright++;
+    }
+    if (bright < 3) {
+      window.__showLoadErr('[BLANK] ゲームの描画が行われていません。\n・ブラウザーのキャッシュを消して再読み込みしてください\n・別のブラウザー(Chrome/Firefox/Safari)でも開けるかご確認ください\n・ハードウェアアクセラレーションの設定もご確認ください');
+    }
+  } catch (e) {}
+}, 4000);
+</script>
 </body>
 </html>
